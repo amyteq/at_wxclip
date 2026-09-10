@@ -1,0 +1,13 @@
+rsync_base: "rsync,-avz,--update"
+excludes:
+  global: &ex_global ".history/,.DS_Store,.claude/worktrees/,.git/worktrees/"
+hosts:
+  air: ["harry-air"]
+peers:
+  air: [arch]
+items:
+  - src: ./
+    target: peer
+    dest: ~/test/at_wxclip/
+    excludes: *ex_global
+    pull: true
