@@ -1,0 +1,52 @@
+# secrets / credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# local agent config
+.claude/settings.local.json
+.claude/worktrees/
+.codex/local/
+
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# node / frontend
+node_modules/
+dist/
+build/
+.vite/
+
+# captured media & runtime output (never commit user content)
+downloads/
+captures/
+*.mp4
+*.m4s
+# NOTE: MPEG-TS segments live under downloads/ or captures/ (already ignored above);
+# do not add a bare *.ts rule here - it would swallow TypeScript sources in web/.
+*.pcap
+*.har
+mitmproxy-ca*
+proxy-ca*
+
+# misc
+coverage/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+.history/
+
+temp/
+trash/
