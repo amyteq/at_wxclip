@@ -10,10 +10,10 @@ from wxclip import __version__
 
 # Subcommands land with their milestones; see docs/开发计划.md.
 PLANNED = {
-    "proxy": "start the local proxy and record candidate media requests",
-    "decode": "resolve the real download address for a captured URL",
-    "download": "download a resolved URL directly, bypassing the proxy",
-    "capture": "capture, decode and download in one go",
+    "proxy": "run the MITM proxy: inject the hook script, receive url + decode_key",
+    "download": "download a captured url directly (no proxy) and decrypt its head",
+    "decrypt": "decrypt an already downloaded file's first 128 KiB from its decode_key",
+    "capture": "inject, capture, download and decrypt in one go",
     "serve": "serve the admin / download dashboard",
 }
 

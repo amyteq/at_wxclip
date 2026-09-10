@@ -1,9 +1,12 @@
 # Agent working agreement
 
-`at_wxclip` (wxclip) captures a WeChat video URL through a local proxy, decodes the real
-media address, downloads the file directly, and offers follow-up processing
-(screenshots, text extraction, summarization). Read `README.md` and `docs/项目背景.md`
-before product-level changes; read `docs/开发计划.md` before picking up work.
+`at_wxclip` (wxclip) captures a WeChat Channels video's URL **and its `decode_key`**
+through a local MITM proxy that injects a hook script, downloads the file directly, XOR
+decrypts its first 128 KiB with an ISAAC64 keystream seeded by that key, and offers
+follow-up processing (screenshots, text extraction, summarization). Read `README.md` and
+`docs/项目背景.md` before product-level changes — the mechanism is not what the intro
+discussion describes, and the background doc records where they differ. Read
+`docs/开发计划.md` before picking up work.
 
 This file is the single source of truth for shared agent instructions. Claude Code reads
 it through `CLAUDE.md`; Codex reads it directly from the repo root. Some Codex
@@ -13,7 +16,7 @@ environments mount `.agents/` and `.codex/` read-only, so nothing unique lives t
 
 - Keep the tool usable from the CLI first; the web UI is a thin layer over the same code.
 - Prefer small, reversible changes and a flat structure over new abstraction layers.
-- Land one capability end to end (capture → decode → download) before broadening scope.
+- Land one capability end to end (capture → download → decrypt) before broadening scope.
 - Do not add a dependency or a new top-level folder without saying why in the PR.
 
 ## Repository layout
@@ -22,13 +25,13 @@ Flat and slim by intent — see `docs/目录说明.md`:
 
 | Path       | Holds                                                        |
 |------------|--------------------------------------------------------------|
-| `wxclip/`  | Python package: proxy, decoder bridge, downloader, web server |
-| `web/`     | Frontend pages and the JavaScript decode logic                |
+| `wxclip/`  | Python package: proxy, keystream bridge, downloader, web server |
+| `web/`     | Injected hook script and the JavaScript keystream module      |
 | `docs/`    | Background, plans, specs, directory notes                     |
 | `tests/`   | Pytest suite (mirrors `wxclip/` module names)                 |
 | `scripts/` | Developer entry points meant to be run by a human             |
 | `tools/`   | One-off or auxiliary utilities, not part of the shipped package |
-| `evals/`   | Fixtures and checks for decode/extract/summarize quality      |
+| `evals/`   | Fixtures and checks for decrypt/extract/summarize quality     |
 | `temp/`    | Scratch space, git-ignored                                    |
 
 ## Engineering
@@ -37,8 +40,10 @@ Flat and slim by intent — see `docs/目录说明.md`:
 - `make lint test` must pass before a commit is pushed.
 - Keep code, identifiers, and commit messages in English; non-technical docs default to
   Simplified Chinese.
-- The proxy exists only to observe traffic from the local WeChat app on this machine.
-  Downloading goes direct, not through the proxy.
+- The proxy MITMs and rewrites responses from the local WeChat app on this machine, so
+  it needs a CA the client trusts. Downloading goes direct, not through the proxy.
+- Treat `decode_key` as an opaque decimal string end to end. It is a 64-bit integer:
+  parsing it into a float or JS number silently corrupts the keystream.
 - Never commit secrets, proxy CA material, captured traffic, or downloaded media.
   Treat anything under `downloads/`, `captures/`, and `temp/` as disposable.
 - Record protocol findings (URL shapes, key derivation, header quirks) in `docs/` — they
