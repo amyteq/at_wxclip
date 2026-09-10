@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "LS",
+      "NotebookRead", "NotebookEdit", "WebFetch", "WebSearch", "Bash",
+      "Agent(Explore)", "Agent(Plan)",
+      "Bash(git*)", "Bash(gh*)",
+      "Bash(bun*)", "Bash(bunx*)", "Bash(vitest*)", "Bash(playwright*)",
+      "Bash(tsc*)", "Bash(eslint*)", "Bash(prettier*)", "Bash(deno*)",
+      "Bash(uv*)", "Bash(python*)", "Bash(pytest*)", "Bash(ruff*)", "Bash(pyright*)", "Bash(mypy*)", "Bash(make*)",
+      "Bash(npm*)", "Bash(pnpm*)", "Bash(npx*)", "Bash(node*)", "Bash(vite*)",
+      "Bash(docker*)", "Bash(docker compose*)",
+      "Bash(supabase status*)", "Bash(supabase start*)", "Bash(supabase stop*)",
+      "Bash(supabase migration*)", "Bash(supabase migration up*)", "Bash(supabase db diff*)", "Bash(supabase gen types*)",
+      "Bash(mkdir*)", "Bash(touch*)", "Bash(cp*)", "Bash(mv*)", "Bash(chmod +x*)", "Bash(scripts/*)", "Bash(export*)", 
+      "Bash(psql*)", "Bash(source*)", "Bash(gh pr merge*)",
+      "Bash(git push *--force-with-lease*)",
+      "Read(~/.aws/**)", "Read(~/.config/gcloud/**)", "Read(~/.config/gh/hosts.yml)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(rm -rf*)",
+      "Bash(rmdir *)",
+      "Bash(git clean*)",
+      "Bash(gh release*)",
+      "Bash(supabase db push*)",
+      "Bash(supabase db reset*)"
+    ],
+    "deny": [
+      "Read(./.env.production)", "Read(~/.ssh/**)", 
+      "Edit(./.env.production)", "Edit(~/.ssh/**)", "Edit(~/.aws/**)", "Edit(~/.config/gcloud/**)",
+      "Bash(sudo*)", "Bash(su *)", "Bash(doas*)",
+      "Bash(rm -rf / *)", "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf $HOME*)",
+      "Bash(git push *--force)", "Bash(git push *--force *)", "Bash(git push --force)", "Bash(git push --force *)",
+      "Bash(git push *-f *)", "Bash(git push -f *)",
+      "Bash(git reset --hard*)", "Bash(git clean -fdx*)", "Bash(git clean -xfd*)", "Bash(git clean -fd*)",
+      "Bash(git filter-branch*)", "Bash(git filter-repo*)", "Bash(git push *--delete*)", "Bash(git branch -D*)", "Bash(git update-ref -d*)",
+      "Bash(docker run *--privileged*)", "Bash(chmod 777*)", "Bash(chown * / *)", "Bash(mkfs*)", "Bash(dd *of=/dev*)",
+      "Bash(shutdown*)", "Bash(reboot*)", "Bash(halt*)",
+      "Bash(curl *169.254.169.254*)", "Bash(wget *169.254.169.254*)", "Bash(curl *metadata.google*)", "Bash(wget *metadata.google*)",
+      "Bash(psql * -c *drop database*)", "Bash(psql * -c *drop schema*)", "Bash(psql * -c *drop table*)",
+      "Bash(psql * -c *truncate*)", "Bash(psql * -c *delete from*)", "Bash(psql * -c *alter * drop*)"
+    ]
+  }
+}
