@@ -16,6 +16,7 @@ APP_ID="${WXCLIP_FLATPAK_APP_ID:-com.tencent.WeChat}"
 PROXY="${WXCLIP_PROXY:-http://127.0.0.1:8899}"
 KILL=0
 BACKGROUND=0
+ACTION="run"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -23,16 +24,37 @@ while [ $# -gt 0 ]; do
     --app-id) APP_ID="$2"; shift ;;
     --kill) KILL=1 ;;
     --background) BACKGROUND=1 ;;
+    --persist) ACTION="persist" ;;
+    --reset) ACTION="reset" ;;
     -h|--help)
       sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       echo
-      echo "usage: scripts/run-wechat-proxied.sh [--proxy URL] [--app-id ID] [--kill] [--background]"
+      cat <<'USAGE'
+
+usage: scripts/run-wechat-proxied.sh [--proxy URL] [--app-id ID] [options]
+
+  (no option)    launch WeChat now with the proxy env vars set
+  --kill         quit a running WeChat first
+  --background   detach, so closing the terminal does not quit WeChat
+  --persist      store the env vars as a flatpak override, so *any* launch route
+                 gets them - the desktop icon and the tray included. Survives
+                 restarts until --reset. WeChat then needs the proxy running to
+                 load H5 pages such as 视频号
+  --reset        drop the override again
+USAGE
       exit 0
       ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+if [ "$ACTION" = "reset" ]; then
+  flatpak override --user --reset "$APP_ID"
+  echo "override cleared for $APP_ID - restart WeChat to go back to a direct connection"
+  flatpak override --user --show "$APP_ID" || true
+  exit 0
+fi
 
 host_port="${PROXY#*://}"
 if ! (exec 3<>"/dev/tcp/${host_port%%:*}/${host_port##*:}") 2>/dev/null; then
@@ -41,6 +63,22 @@ if ! (exec 3<>"/dev/tcp/${host_port%%:*}/${host_port##*:}") 2>/dev/null; then
   exit 1
 fi
 echo "proxy reachable: $PROXY"
+
+if [ "$ACTION" = "persist" ]; then
+  flatpak override --user "$APP_ID" \
+    --env=http_proxy="$PROXY" \
+    --env=https_proxy="$PROXY" \
+    --env=HTTP_PROXY="$PROXY" \
+    --env=HTTPS_PROXY="$PROXY" \
+    --env=all_proxy="$PROXY" \
+    --env=no_proxy="localhost"
+  echo "stored for $APP_ID:"
+  flatpak override --user --show "$APP_ID" | sed 's/^/  /'
+  echo
+  echo "Now quit WeChat (tray -> 退出) and start it however you normally do -"
+  echo "the webview will come through $PROXY. Undo with --reset."
+  exit 0
+fi
 
 if pgrep -f "/app/extra/wechat/wechat" >/dev/null 2>&1; then
   if [ "$KILL" -eq 1 ]; then
