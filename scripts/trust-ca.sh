@@ -6,7 +6,10 @@
 # database depends on how WeChat was installed:
 #
 #   flatpak  the app has no access to the host home, so its NSS db is inside the sandbox
-#            home: ~/.var/app/<app-id>/.pki/nssdb
+#            home: ~/.var/app/<app-id>/.pki/nssdb. Writing the file there is not enough:
+#            a Flatpak home only shows the subpaths its metadata persists (for WeChat
+#            that is .xwechat and xwechat_files), so `.pki` has to be persisted too or
+#            the app simply does not see the database. This script does that for you.
 #   user     a distro package (e.g. /opt/wechat) reads the normal ~/.pki/nssdb
 #   system   OpenSSL-based traffic reads the system anchors; needs sudo, and a Flatpak app
 #            does not see them (the runtime ships its own bundle)
@@ -91,6 +94,14 @@ nss_apply() {
       certutil -d "sql:$db" -A -t "C,," -n "$NICKNAME" -i "$CERT"
       echo "[$label] installed in $db"
       ;;
+    verify)
+      if certutil -d "sql:$db" -L -n "$NICKNAME" >/dev/null 2>&1; then
+        echo "[$label] certificate is in the database"
+      else
+        echo "[$label] certificate is NOT in the database" >&2
+        return 1
+      fi
+      ;;
     remove)
       if certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1; then
         echo "[$label] removed from $db"
@@ -128,9 +139,25 @@ system_apply() {
   esac
 }
 
+# A Flatpak home only exposes the subpaths its metadata persists, so the database above
+# is invisible to the app until `.pki` is persisted as well. Without this the certificate
+# is installed, nothing errors, and the app still rejects the proxy (observed 2026-09-11).
+flatpak_persist_pki() {
+  [ "$ACTION" = "add" ] || return 0
+  have flatpak || return 0
+  flatpak override --user "$APP_ID" --persist=.pki
+  echo "[flatpak:$APP_ID] ~/.pki is now persisted into the sandbox"
+  if timeout 60 flatpak run --command=sh "$APP_ID" \
+      -c '[ -f "$HOME/.pki/nssdb/cert9.db" ]' >/dev/null 2>&1; then
+    echo "[flatpak:$APP_ID] the app can see the database"
+  else
+    echo "[flatpak:$APP_ID] WARNING: the app still cannot see \$HOME/.pki/nssdb" >&2
+  fi
+}
+
 for target in "${TARGETS[@]}"; do
   case "$target" in
-    flatpak) nss_apply "$(flatpak_db)" "flatpak:$APP_ID" || true ;;
+    flatpak) nss_apply "$(flatpak_db)" "flatpak:$APP_ID" && flatpak_persist_pki || true ;;
     user) nss_apply "$HOME/.pki/nssdb" "user" || true ;;
     system) system_apply ;;
   esac
@@ -138,6 +165,8 @@ done
 
 if [ "$ACTION" = "add" ]; then
   echo
-  echo "Restart WeChat, then point it at the proxy (设置 → 通用设置 → 网络代理)."
+  echo "Restart WeChat completely (tray -> 退出), then point it at the proxy"
+  echo "(设置 → 通用设置 → 网络代理). For the webview to use the proxy as well, see"
+  echo "scripts/run-wechat-proxied.sh --persist."
   echo "Undo with: scripts/trust-ca.sh --remove"
 fi

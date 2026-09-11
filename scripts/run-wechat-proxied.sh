@@ -52,6 +52,8 @@ done
 if [ "$ACTION" = "reset" ]; then
   flatpak override --user --reset "$APP_ID"
   echo "override cleared for $APP_ID - restart WeChat to go back to a direct connection"
+  echo "note: this also drops --persist=.pki, so the app stops seeing the CA database."
+  echo "      re-run scripts/trust-ca.sh when you want to intercept it again."
   flatpak override --user --show "$APP_ID" || true
   exit 0
 fi
