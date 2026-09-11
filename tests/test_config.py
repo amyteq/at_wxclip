@@ -11,6 +11,7 @@ def test_defaults_match_the_documented_ones():
     settings = Settings.from_env(env={})
     assert (settings.proxy_host, settings.proxy_port) == ("127.0.0.1", 8899)
     assert settings.capture_dir == Path("captures")
+    assert settings.process_dir == Path("processed")
     assert settings.ca_dir.parts[-2:] == ("wxclip", "ca")
 
 
@@ -20,11 +21,13 @@ def test_environment_overrides_everything():
             "WXCLIP_PROXY_HOST": "0.0.0.0",
             "WXCLIP_PROXY_PORT": "9999",
             "WXCLIP_CAPTURE_DIR": "/tmp/caps",
+            "WXCLIP_PROCESS_DIR": "/tmp/proc",
             "WXCLIP_CA_DIR": "/tmp/ca",
         }
     )
     assert (settings.proxy_host, settings.proxy_port) == ("0.0.0.0", 9999)
     assert settings.capture_dir == Path("/tmp/caps")
+    assert settings.process_dir == Path("/tmp/proc")
     assert settings.ca_dir == Path("/tmp/ca")
 
 

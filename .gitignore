@@ -51,3 +51,6 @@ Thumbs.db
 
 temp/
 trash/
+
+# post-processing output (stills, transcript, summary - all reproducible)
+processed/

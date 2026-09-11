@@ -11,6 +11,10 @@ dev = ["pytest>=8", "ruff>=0.6"]
 # The proxy needs a MITM engine that can rewrite response bodies; mitmproxy also
 # manages the CA. Kept optional so the test suite and CI stay free of it.
 proxy = ["mitmproxy>=11,<13"]
+# There is deliberately no `summarize` extra: the anthropic SDK cannot be installed
+# beside mitmproxy (it needs httpx2 -> httpcore2 -> h11>=0.16, which mitmproxy pins
+# below), so `wxclip summarize` would not run in the same venv as `wxclip capture`.
+# It posts to the Messages API with stdlib urllib instead - see wxclip/summarize.py.
 
 [project.scripts]
 wxclip = "wxclip.__main__:main"
