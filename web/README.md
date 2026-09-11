@@ -1,6 +1,6 @@
 # web
 
-现在只剩注入脚本一件真事（keystream 自 M1 起在 Python 侧，dashboard 还没写）。注意这里的
+两件事：注入脚本，和 M2 起的 dashboard（keystream 自 M1 起在 Python 侧）。注意这里的
 职责和讨论里的描述不一样，见 `docs/项目背景.md`：
 
 1. **注入脚本（hook script）** —— `inject.js`，由代理注入到视频号 H5 页面里，hook
@@ -29,7 +29,17 @@
    逐字节一致。它现在只剩一个角色：`evals/README.md` 黄金样本表的来源，用
    `tools/keystream-golden.mjs` 生成与比对。
 
-3. **dashboard** —— 由 `wxclip serve` 提供的管理与下载面板，保持朴素。
+3. **dashboard** —— `dashboard.html` + `dashboard.js`，由 `wxclip serve` 提供的管理与下载面板
+   （`wxclip/server.py`）。原生 DOM，一个页面加一个脚本，没有框架、没有 CDN、没有构建步骤：
+   它从 localhost 发出来、列的是隔壁目录里的文件，断网也该照样能用。
 
-构建工具与是否上 TypeScript 等 M2 做 dashboard 时再定（见 `docs/开发计划.md`），现在不预先
-铺 `package.json` 和依赖。构建产物（`dist/`、`node_modules/`）不进 Git。
+   两条不能破的规矩：**`decode_key` 永远是文本**（64 位整数，`Number()` 或任何算术都会静默
+   丢精度，页面里用不到它的值）；**从 WeChat 页面来的文本一律走 `textContent` / `createElement`，
+   不碰 `innerHTML`**（说明、昵称、文件名都属于此列）。
+
+   页面只跟三个端点打交道：`GET /api/state`（轮询，忙时 1 s、闲时 3 s）、
+   `POST /api/download`（只提交它刚展示过的那条记录的裸 `url`）、`GET /files/<name>`
+   （播放或另存，支持 Range）。
+
+构建工具与是否上 TypeScript：M2 的结论是都不要 —— 面板这个体量用原生 DOM 更省事，所以
+`package.json` 和依赖仍然没有铺。真需要了再说。构建产物（`dist/`、`node_modules/`）不进 Git。

@@ -12,14 +12,13 @@ from typing import TextIO
 from wxclip import __version__, ca, downloader, inject, pipeline
 from wxclip import decrypt as decrypt_module
 from wxclip import proxy as proxy_module  # mitmproxy-free at import time
+from wxclip import server as server_module
 from wxclip.config import Settings
 from wxclip.downloader import DownloadError, human_size
 from wxclip.keystream import KeystreamError
 
 # Subcommands land with their milestones; see docs/开发计划.md.
-PLANNED = {
-    "serve": "serve the admin / download dashboard",
-}
+PLANNED: dict[str, str] = {}
 
 MISSING_MITMPROXY = (
     "wxclip proxy needs mitmproxy, which is an optional dependency.\n"
@@ -218,6 +217,37 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="give up if nothing has been captured after this many seconds (default: no limit)",
+    )
+
+    serve = sub.add_parser(
+        "serve",
+        help="serve the admin / download dashboard",
+        description=(
+            "Runs a local web panel over the same capture logs the CLI reads: the whole "
+            "captured feed in one list, the proxy's status, and a download button per "
+            "clip. It never downloads anything it did not capture itself, and it does not "
+            "run the proxy - start that with `wxclip proxy` alongside it."
+        ),
+    )
+    serve.add_argument("--host", default=defaults.server_host, help="listen address")
+    serve.add_argument("--port", type=int, default=defaults.server_port, help="listen port")
+    serve.add_argument(
+        "--dir", type=Path, default=defaults.download_dir, help="where finished files go"
+    )
+    serve.add_argument(
+        "--capture-dir",
+        type=Path,
+        default=defaults.capture_dir,
+        help="where to look for captures-*.jsonl",
+    )
+    serve.add_argument(
+        "--proxy-host", default=defaults.proxy_host, help="proxy address to report the status of"
+    )
+    serve.add_argument(
+        "--proxy-port",
+        type=int,
+        default=defaults.proxy_port,
+        help="proxy port to report the status of",
     )
 
     for name, description in PLANNED.items():
@@ -475,6 +505,23 @@ def cmd_capture(args: argparse.Namespace) -> int:
     return 0 if runner.results else 2
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    defaults = Settings.from_env(dotenv=Path(".env"))
+    settings = Settings(
+        proxy_host=args.proxy_host,
+        proxy_port=args.proxy_port,
+        server_host=args.host,
+        server_port=args.port,
+        download_dir=args.dir,
+        capture_dir=args.capture_dir,
+        ca_dir=defaults.ca_dir,
+    )
+    try:
+        return server_module.serve(settings)
+    except OSError as exc:  # the usual one: something already has the port
+        return _fail(f"cannot listen on {args.host}:{args.port}: {exc}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -494,6 +541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "download": cmd_download,
         "decrypt": cmd_decrypt,
         "capture": cmd_capture,
+        "serve": cmd_serve,
     }
     return commands[args.command](args)
 

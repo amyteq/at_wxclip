@@ -15,7 +15,8 @@ from pathlib import Path
 
 #: Every wxclip endpoint lives under this path prefix, on whatever host asks for it.
 WXCLIP_PREFIX = "/__wxclip/"
-SCRIPT_PATH = WXCLIP_PREFIX + "inject.js"
+SCRIPT_NAME = "inject.js"
+SCRIPT_PATH = WXCLIP_PREFIX + SCRIPT_NAME
 CAPTURE_PATH = WXCLIP_PREFIX + "capture"
 PING_PATH = WXCLIP_PREFIX + "ping"
 
@@ -79,19 +80,24 @@ def should_inject(
     return any_host or host_matches(host, page_hosts)
 
 
-def _script_candidates() -> Iterable[Path]:
-    """`web/inject.js` in a checkout; the copy hatch force-includes in a wheel."""
+def _asset_candidates(name: str) -> Iterable[Path]:
+    """`web/<name>` in a checkout; the copy hatch force-includes in a wheel."""
     here = Path(__file__).resolve()
-    yield here.parents[1] / "web" / "inject.js"
-    yield here.parent / "_web" / "inject.js"
+    yield here.parents[1] / "web" / name
+    yield here.parent / "_web" / name
+
+
+def asset_source(name: str) -> Path:
+    """Locate a file shipped from `web/`: the hook script, or a dashboard asset."""
+    for candidate in _asset_candidates(name):
+        if candidate.is_file():
+            return candidate
+    tried = ", ".join(str(c) for c in _asset_candidates(name))
+    raise FileNotFoundError(f"{name} not found, looked in: {tried}")
 
 
 def script_source() -> Path:
-    for candidate in _script_candidates():
-        if candidate.is_file():
-            return candidate
-    tried = ", ".join(str(c) for c in _script_candidates())
-    raise FileNotFoundError(f"hook script not found, looked in: {tried}")
+    return asset_source(SCRIPT_NAME)
 
 
 def hook_script(

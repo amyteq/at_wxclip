@@ -19,15 +19,17 @@ def test_no_command_prints_help(capsys):
     assert "wxclip" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", sorted(PLANNED))
-def test_planned_commands_are_accepted_but_unimplemented(command, capsys):
-    assert main([command]) == 2
-    assert "not implemented yet" in capsys.readouterr().err
+def test_nothing_is_a_placeholder_any_more():
+    """M2 emptied PLANNED - `serve` was the last entry in it. A later milestone's
+    commands go back in there, and the help marks them `(planned)` again."""
+    assert PLANNED == {}
 
 
-@pytest.mark.parametrize("command", ["proxy", "ca", "download", "decrypt", "capture"])
-def test_m1_commands_are_no_longer_planned(command):
+@pytest.mark.parametrize("command", ["proxy", "ca", "download", "decrypt", "capture", "serve"])
+def test_every_command_is_wired_up(command, capsys):
     assert command not in PLANNED
+    assert main([]) == 0
+    assert command in capsys.readouterr().out
 
 
 def test_unknown_command_is_rejected():
@@ -207,3 +209,23 @@ def test_capture_dry_run_reports_the_plan_without_listening(tmp_path, capsys):
 def test_capture_rejects_a_max_size_that_is_not_a_size(tmp_path, capsys):
     assert main(["capture", "--max-size", "loads", "--ca-dir", str(tmp_path / "ca")]) == 1
     assert "not a size" in capsys.readouterr().err
+
+
+# -- serve -------------------------------------------------------------------------------
+
+
+def test_serve_keeps_the_panel_and_the_proxy_on_separate_ports():
+    """The panel only reports the proxy's status; they are two processes."""
+    args = build_parser().parse_args(["serve", "--port", "18080", "--proxy-port", "18899"])
+    assert (args.port, args.proxy_port) == (18080, 18899)
+
+
+def test_serve_reports_a_port_it_cannot_have(capsys):
+    import socket
+
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        port = taken.getsockname()[1]
+        assert main(["serve", "--host", "127.0.0.1", "--port", str(port)]) == 1
+    assert "cannot listen" in capsys.readouterr().err

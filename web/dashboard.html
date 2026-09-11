@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wxclip 面板</title>
+<style>
+  :root {
+    --bg: #f7f7f6;
+    --panel: #ffffff;
+    --line: #e2e2df;
+    --ink: #1b1b1a;
+    --dim: #6b6b66;
+    --accent: #1f6f4a;
+    --warn: #9a3b1f;
+    --radius: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a19;
+      --panel: #232322;
+      --line: #363634;
+      --ink: #ececea;
+      --dim: #9a9a94;
+      --accent: #63c295;
+      --warn: #e59273;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 48px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 system-ui, -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 20px; font-weight: 650; }
+  h2 { margin: 0 0 12px; font-size: 15px; font-weight: 650; }
+  .sub { margin: 0 0 20px; color: var(--dim); font-size: 13px; }
+  section {
+    margin-bottom: 20px;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: baseline; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); font-size: 13px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.up { background: var(--accent); }
+  .dot.down { background: var(--warn); }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+  }
+  .paths { margin-top: 10px; color: var(--dim); font-size: 12.5px; }
+  .paths div { margin-top: 3px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--dim); font-size: 12.5px; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .url { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title { font-weight: 550; }
+  .muted { color: var(--dim); }
+  button {
+    padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--ink); font: inherit; font-size: 13px;
+    cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  a { color: var(--accent); }
+  .bar {
+    position: relative; height: 6px; min-width: 120px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+    overflow: hidden;
+  }
+  .bar > i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+  .badge { font-size: 12px; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line); }
+  .badge.bad { color: var(--warn); border-color: var(--warn); }
+  .empty { color: var(--dim); font-size: 13px; }
+  #error {
+    margin-bottom: 16px; padding: 10px 14px; border-radius: var(--radius);
+    border: 1px solid var(--warn); color: var(--warn);
+  }
+  video { width: 100%; max-width: 420px; margin-top: 8px; border-radius: 6px; background: #000; }
+</style>
+</head>
+<body>
+<main>
+  <h1>wxclip 面板</h1>
+  <p class="sub">
+    代理把 <code>decode_key</code> 抓回来，这里挑一条下载。下载直连 CDN，不走代理。
+  </p>
+
+  <div id="error" hidden></div>
+
+  <section>
+    <h2>状态</h2>
+    <div class="row">
+      <span class="pill"><span class="dot" id="proxy-dot"></span><span id="proxy-text">正在检查…</span></span>
+      <span class="pill">捕获 <strong id="media-count">–</strong> 条</span>
+      <span class="pill">已下载 <strong id="file-count">–</strong> 个文件</span>
+      <span class="muted mono" id="version"></span>
+    </div>
+    <div class="paths">
+      <div>抓取记录：<span class="mono" id="capture-dir">–</span> <span id="log-count"></span></div>
+      <div>下载目录：<span class="mono" id="download-dir">–</span></div>
+      <div id="proxy-hint" hidden>提示：<code id="proxy-command"></code></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>捕获到的视频</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>说明</th><th class="num">大小</th>
+            <th>decode_key</th><th>url</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="media"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="media-empty" hidden>
+      还没有抓到东西。先跑 <code>wxclip proxy</code>，然后在 WeChat 里播一个视频号视频。
+    </p>
+  </section>
+
+  <section>
+    <h2>下载任务</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>文件</th><th>状态</th><th>进度</th><th class="num">已传</th></tr>
+        </thead>
+        <tbody id="jobs"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="jobs-empty" hidden>还没有任务。</p>
+  </section>
+
+  <section>
+    <h2>下载目录里的文件</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>文件</th><th class="num">大小</th><th>时间</th><th></th></tr>
+        </thead>
+        <tbody id="files"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="files-empty" hidden>目录还是空的。</p>
+    <div id="player" hidden><video id="video" controls preload="metadata"></video></div>
+  </section>
+</main>
+<script src="/dashboard.js"></script>
+</body>
+</html>
