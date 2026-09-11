@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from wxclip import __version__, ca, inject
+from wxclip import proxy as proxy_module  # mitmproxy-free at import time
 from wxclip.config import Settings
 
 # Subcommands land with their milestones; see docs/开发计划.md.
@@ -65,7 +66,19 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
         "--ignore-host",
         action="append",
         metavar="REGEX",
-        help="host regex to tunnel untouched (default keeps WeChat's mmtls hosts out)",
+        help="host regex to tunnel untouched (replaces the default mmtls host list)",
+    )
+    proxy.add_argument(
+        "--no-ignore-hosts",
+        action="store_true",
+        help="intercept everything, WeChat's own mmtls transport included",
+    )
+    proxy.add_argument(
+        "--stream-large-bodies",
+        metavar="SIZE",
+        default=proxy_module.DEFAULT_STREAM_LARGE_BODIES,
+        help="pass bodies over SIZE through unbuffered, so media cannot stall behind the "
+        f"proxy (default {proxy_module.DEFAULT_STREAM_LARGE_BODIES}; 'off' to buffer everything)",
     )
     proxy.add_argument("--no-save-pages", action="store_true", help="do not keep page HTML")
     proxy.add_argument("--no-save-flows", action="store_true", help="do not write a .mitm dump")
@@ -113,8 +126,6 @@ def cmd_proxy(args: argparse.Namespace) -> int:
         ca_dir=args.ca_dir,
     )
     try:
-        from wxclip import proxy as proxy_module
-
         cert = ca.ensure_ca(settings.ca_dir)
     except ImportError:
         print(MISSING_MITMPROXY, file=sys.stderr)
@@ -127,10 +138,14 @@ def cmd_proxy(args: argparse.Namespace) -> int:
         include_snippet=not args.no_resp_snippet,
         save_pages=not args.no_save_pages,
     )
+    ignore_hosts: tuple[str, ...] = ()
+    if not args.no_ignore_hosts:
+        ignore_hosts = tuple(args.ignore_host or proxy_module.DEFAULT_IGNORE_HOSTS)
     options = proxy_module.proxy_options(
         settings,
-        ignore_hosts=args.ignore_host or proxy_module.DEFAULT_IGNORE_HOSTS,
+        ignore_hosts=ignore_hosts,
         save_flows=not args.no_save_flows,
+        stream_large_bodies=None if args.stream_large_bodies == "off" else args.stream_large_bodies,
     )
 
     if args.dry_run:

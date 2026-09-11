@@ -27,10 +27,23 @@ from wxclip import __version__, inject
 from wxclip.capture import CaptureError, CaptureLog, format_event, parse_event
 from wxclip.config import Settings
 
-#: Hosts we do not try to MITM. WeChat's own transport (mmtls) is not TLS; mitmproxy
-#: tunnels it as raw TCP once it fails to find a ClientHello, but excluding the hosts
-#: outright keeps login traffic well away from us. Extend with `--ignore-host`.
-DEFAULT_IGNORE_HOSTS: tuple[str, ...] = (r"^(long|short|dns|minorshort)\.weixin\.qq\.com:",)
+#: Hosts we do not try to MITM. WeChat's own transport (mmtls) is not TLS - it
+#: arrives as plain HTTP POSTs to `/mmtls/<id>` with an opaque body, so there is
+#: nothing to read and nothing to inject, and leaving login and messaging alone is
+#: worth more than the log lines. `--ignore-host` replaces this list,
+#: `--no-ignore-hosts` clears it.
+#:
+#: The region prefix varies - this machine's client talks to `sgshort.wechat.com`,
+#: while the reference implementation's world is `short.weixin.qq.com` - hence the
+#: leading wildcard. Observed on 2026-09-11: sgshort, sgminorshort, dns.wechat.com.
+DEFAULT_IGNORE_HOSTS: tuple[str, ...] = (
+    r"^[a-z0-9-]*(long|short|minorshort|dns)\.(wechat\.com|weixin\.qq\.com):",
+)
+
+#: Responses over this size are passed through unbuffered, so a media download
+#: cannot stall behind the proxy. Well above any HTML page, which has to stay
+#: buffered to be injectable.
+DEFAULT_STREAM_LARGE_BODIES = "1m"
 
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -288,6 +301,7 @@ def proxy_options(
     *,
     ignore_hosts: Iterable[str] = DEFAULT_IGNORE_HOSTS,
     save_flows: bool = True,
+    stream_large_bodies: str | None = DEFAULT_STREAM_LARGE_BODIES,
 ) -> dict[str, Any]:
     """Options handed to mitmproxy after its addons are loaded.
 
@@ -300,6 +314,7 @@ def proxy_options(
         "listen_port": settings.proxy_port,
         "connection_strategy": "lazy",
         "ignore_hosts": list(ignore_hosts),
+        "stream_large_bodies": stream_large_bodies or None,
         # `flow_detail` belongs to the dumper addon, which we do not load: our own
         # handlers do the printing.
         "termlog_verbosity": "info",

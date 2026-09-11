@@ -5,6 +5,7 @@ names mitmproxy hands them.
 """
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +13,12 @@ import pytest
 from wxclip import inject
 from wxclip.capture import CaptureLog
 from wxclip.config import Settings
-from wxclip.proxy import WxclipAddon, proxy_options
+from wxclip.proxy import (
+    DEFAULT_IGNORE_HOSTS,
+    DEFAULT_STREAM_LARGE_BODIES,
+    WxclipAddon,
+    proxy_options,
+)
 
 CAPTURE_BODY = json.dumps(
     {
@@ -209,6 +215,46 @@ def test_a_client_rejecting_our_certificate_is_recorded(addon):
     addon.tls_failed_client(data)
     assert any("CA not trusted" in line for line in lines)
     assert addon.stats.errors == 1
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        # what this machine's client actually talks to, observed 2026-09-11
+        "sgshort.wechat.com:80",
+        "sgminorshort.wechat.com:80",
+        "dns.wechat.com:443",
+        # and the reference implementation's world
+        "short.weixin.qq.com:80",
+        "long.weixin.qq.com:443",
+        "minorshort.weixin.qq.com:80",
+    ],
+)
+def test_wechat_transport_hosts_are_left_alone_by_default(host):
+    """mmtls is not TLS and it carries login; intercepting it buys nothing."""
+    assert any(re.search(pattern, host) for pattern in DEFAULT_IGNORE_HOSTS)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "channels.weixin.qq.com:443",  # the page we must inject into
+        "finder.video.qq.com:443",  # the media we must capture
+        "res.wx.qq.com:443",
+        "wx.qlogo.cn:443",
+        "mmhead.c2c.wechat.com:443",
+    ],
+)
+def test_the_hosts_we_need_are_still_intercepted(host):
+    assert not any(re.search(pattern, host) for pattern in DEFAULT_IGNORE_HOSTS)
+
+
+def test_media_sized_bodies_are_not_buffered(tmp_path):
+    """A buffered media response stalls playback; HTML stays small enough to rewrite."""
+    options = proxy_options(Settings(ca_dir=tmp_path), save_flows=False)
+    assert options["stream_large_bodies"] == DEFAULT_STREAM_LARGE_BODIES
+    off = proxy_options(Settings(ca_dir=tmp_path), save_flows=False, stream_large_bodies=None)
+    assert off["stream_large_bodies"] is None
 
 
 def test_options_keep_mitmproxy_from_dialing_out_for_our_own_endpoints(tmp_path):
