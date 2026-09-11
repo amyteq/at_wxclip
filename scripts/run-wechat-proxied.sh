@@ -15,16 +15,18 @@ set -euo pipefail
 APP_ID="${WXCLIP_FLATPAK_APP_ID:-com.tencent.WeChat}"
 PROXY="${WXCLIP_PROXY:-http://127.0.0.1:8899}"
 KILL=0
+BACKGROUND=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --proxy) PROXY="$2"; shift ;;
     --app-id) APP_ID="$2"; shift ;;
     --kill) KILL=1 ;;
+    --background) BACKGROUND=1 ;;
     -h|--help)
       sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       echo
-      echo "usage: scripts/run-wechat-proxied.sh [--proxy URL] [--app-id ID] [--kill]"
+      echo "usage: scripts/run-wechat-proxied.sh [--proxy URL] [--app-id ID] [--kill] [--background]"
       exit 0
       ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -52,7 +54,9 @@ if pgrep -f "/app/extra/wechat/wechat" >/dev/null 2>&1; then
 fi
 
 echo "launching $APP_ID with http_proxy=$PROXY ..."
-exec flatpak run \
+echo "(the in-app proxy setting can stay on - it covers the main process, this covers the webview)"
+
+set -- flatpak run \
   --env=http_proxy="$PROXY" \
   --env=https_proxy="$PROXY" \
   --env=HTTP_PROXY="$PROXY" \
@@ -60,3 +64,12 @@ exec flatpak run \
   --env=all_proxy="$PROXY" \
   --env=no_proxy="localhost" \
   "$APP_ID"
+
+if [ "$BACKGROUND" -eq 1 ]; then
+  # detached, so closing this terminal does not take WeChat down with it
+  setsid "$@" >/dev/null 2>&1 < /dev/null &
+  echo "started in the background (pid $!). Closing this terminal is fine."
+else
+  echo "keep this terminal open - closing it quits WeChat (or re-run with --background)"
+  exec "$@"
+fi
