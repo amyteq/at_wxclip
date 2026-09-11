@@ -88,6 +88,7 @@ class WxclipAddon:
         traffic_log: CaptureLog | None = None,
         page_dir: Path | None = None,
         echo: Callable[[str], None] = echo_line,
+        on_event: Callable[[Any], None] | None = None,
         response_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.script = script
@@ -98,6 +99,9 @@ class WxclipAddon:
         self.traffic_log = traffic_log
         self.page_dir = page_dir
         self.echo = echo
+        #: Where `wxclip capture` hangs its downloader. Runs on the event loop, so it has
+        #: to hand the work off rather than do it.
+        self.on_event = on_event
         self._response_factory = response_factory
         self.stats = Stats()
 
@@ -206,6 +210,11 @@ class WxclipAddon:
                     f"!! decode_key {media.decode_key!r} is not a plain digit string - "
                     "something parsed it as a number and the keystream will be wrong"
                 )
+        if self.on_event is not None:
+            try:
+                self.on_event(event)
+            except Exception as exc:  # a consumer's bug must not break the capture channel
+                self.echo(f"!! capture handler failed: {exc}")
         flow.response = self._make(204, b"", self._cors())
 
     def _cors(self) -> dict[str, str]:
@@ -284,11 +293,13 @@ def build_addon(
     include_snippet: bool = True,
     save_pages: bool = True,
     echo: Callable[[str], None] = echo_line,
+    on_event: Callable[[Any], None] | None = None,
 ) -> WxclipAddon:
     return WxclipAddon(
         script=inject.hook_script(version=__version__, include_snippet=include_snippet),
         page_hosts=page_hosts,
         inject_any_html=inject_any_html,
+        on_event=on_event,
         capture_log=CaptureLog(settings.capture_dir, "captures"),
         traffic_log=CaptureLog(settings.capture_dir, "traffic"),
         page_dir=settings.capture_dir / "pages" if save_pages else None,
@@ -331,8 +342,14 @@ def run(
     addon: WxclipAddon,
     options: dict[str, Any] | None = None,
     echo: Callable[[str], None] = echo_line,
+    on_ready: Callable[[Callable[[], None]], None] | None = None,
 ) -> int:
-    """Run the proxy until interrupted. Returns a process exit code."""
+    """Run the proxy until interrupted. Returns a process exit code.
+
+    `on_ready` is handed a stop function once the proxy is listening. It is safe to call
+    from any thread, which is the point: `wxclip capture` downloads on a worker and has to
+    be able to bring the proxy down from there when it has what it came for.
+    """
     import asyncio
 
     settings.capture_dir.mkdir(parents=True, exist_ok=True)
@@ -356,6 +373,8 @@ def run(
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(sig, master.shutdown)
+        if on_ready is not None:
+            on_ready(lambda: loop.call_soon_threadsafe(master.shutdown))
         echo(
             f"wxclip proxy listening on http://{settings.proxy_host}:{settings.proxy_port} "
             "(HTTP proxy; point WeChat at it)\npress ctrl-c to stop"
