@@ -9,6 +9,12 @@
 
 改动 keystream 实现、JSAPI 解析或 prompt 之前，先在这里补一个有代表性的样本。
 
+已有的样本：
+
+- `jsapi-response-linux-20260911.md` —— Linux 上真实 JSAPI 响应的脱敏形态：`err_msg` 是
+  `H5ExtTransfer:ok`（api 名 `finderH5ExtTransfer`）、`decode_key` 是带引号的 8–10 位十进制
+  字符串、媒体是整段文件而非分片。只记字段名/类型/取值范围，不留真实 key 与地址。
+
 体积大的视频/音频样本不进 Git：放外部网盘，并在本文件登记来源、大小与 `sha1sum`。
 
 | 样本 | 来源 | 大小 | sha1 | 用途 |

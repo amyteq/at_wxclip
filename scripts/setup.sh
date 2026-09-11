@@ -7,12 +7,12 @@ cd "$(dirname "$0")/.."
 
 if command -v uv >/dev/null 2>&1; then
   uv venv --allow-existing .venv
-  uv pip install --python .venv/bin/python -e '.[dev]'
+  uv pip install --python .venv/bin/python -e '.[dev,proxy]'
 else
   echo "uv not found, falling back to venv + pip" >&2
   [ -d .venv ] || python3 -m venv .venv
   .venv/bin/python -m pip install --upgrade pip
-  .venv/bin/python -m pip install -e '.[dev]'
+  .venv/bin/python -m pip install -e '.[dev,proxy]'
 fi
 
 echo

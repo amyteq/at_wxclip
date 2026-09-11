@@ -13,15 +13,17 @@
         │
         ▼
 ② wxclip MITM 代理（必须安装并信任本地 CA，否则看不到 HTTPS 内容）
-        ├── 改写 channels.weixin.qq.com 的 /web/pages/feed 响应，注入一个 <script>
-        └── 顶替 res.wx.qq.com 上那个脚本的响应体，塞进自己的注入代码
+        ├── 改写 channels.weixin.qq.com 的 HTML 响应，在 </body> 前注入一个 <script>
+        └── 脚本走页面同源 /__wxclip/inject.js，由代理自己应答
+            （参考实现是顶替 res.wx.qq.com 上某个脚本的响应体）
         │
         ▼
 ③ 注入脚本 hook window.WeixinJSBridge.invoke，从 JSAPI 响应里取出
    media[0] 的 url + url_token、decode_key、file_size、描述、作者
         │
         ▼
-④ 上报给 wxclip（上游用哨兵域名 aaaa.com，再由代理自己拦下来）
+④ 回传给 wxclip：POST 同源的 /__wxclip/capture，代理拦下，不转发上游
+   （参考实现用哨兵域名 aaaa.com 做这件事）
         │
         ▼
 ⑤ 直连下载 url（不走代理）
@@ -65,10 +67,25 @@
 ## 快速开始
 
 ```bash
-make setup          # 创建 .venv 并安装依赖（uv，回落到 pip）
+make setup          # 创建 .venv 并安装依赖（uv，回落到 pip；含代理用的 mitmproxy）
 make lint test      # 检查 + 测试
 python -m wxclip --help
 ```
+
+抓取用两步，细节和判定方法见 `docs/M0-操作步骤.md`：
+
+```bash
+.venv/bin/python -m wxclip ca      # 生成本地 CA，打印指纹与该装到哪个信任库
+scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
+.venv/bin/python -m wxclip proxy   # 默认 127.0.0.1:8899，在 WeChat 里设为 HTTP 代理后重启它
+```
+
+代理运行时的产物都在 `captures/`（git 忽略）：`traffic-*.jsonl` 每条 flow 的摘要、
+`captures-*.jsonl` 注入脚本回传的事件（含 `decode_key`）、`pages/*.html` 注入前的原始页面、
+`flows-*.mitm` 完整 flow 存档（`mitmproxy -r` 回看）。
+
+同源的 `/__wxclip/*` 比参考实现的 `res.wx.qq.com` + 哨兵域名 `aaaa.com` 少一层 CSP 与跨域
+风险，代价是页面必须是 HTML 响应（原生渲染的页面注入不进去，这正是 M0 要判定的事）。
 
 ## 目录
 
