@@ -36,6 +36,7 @@ captures/
 # do not add a bare *.ts rule here - it would swallow TypeScript sources in web/.
 *.pcap
 *.har
+*.mitm
 mitmproxy-ca*
 proxy-ca*
 
