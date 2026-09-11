@@ -109,3 +109,48 @@ def test_capture_log_appends_one_json_object_per_line(tmp_path):
     assert record["media"][0]["decode_key"] == "13835058055282163712"
     assert record["media"][0]["download_url"].endswith("&extra=2")
     assert record["kind"] == "capture"
+
+
+def test_parses_the_shape_linux_actually_sends():
+    """One capture event carries the whole visible feed - eight entries on the machine in
+    `evals/jsapi-response-linux-20260911.md`, not the one the reference implementation
+    reads - and the key arrives quoted and 8-10 digits long, not as a bare 20-digit
+    number. Both of those have caught code that assumed otherwise.
+    """
+    payload = {
+        "kind": "capture",
+        "api": "finderH5ExtTransfer",
+        "err_msg": "H5ExtTransfer:ok",
+        "media": [
+            {
+                "url": f"https://finder.video.qq.com/251/clip{n}",
+                "url_token": f"?token={n}&sign=x",
+                "decode_key": str(1234567890 + n),
+                "decode_key_json_type": "string",
+                "file_size": 3873528 + n,
+                "description": "",
+                "nickname": "",
+            }
+            for n in range(8)
+        ],
+    }
+    event = parse_event(json.dumps(payload))
+    assert len(event.captures) == 8
+    assert all(m.decode_key_ok for m in event.captures)
+    assert all(m.decode_key_json_type == "string" for m in event.captures)
+    assert {len(m.decode_key) for m in event.captures} == {10}
+    assert event.captures[7].download_url.endswith("clip7?token=7&sign=x")
+
+
+def test_the_key_survives_a_round_trip_through_the_capture_log(tmp_path):
+    """decode_key is a string from the hook script's regex to the XOR. If any hop parses
+    it as a number, 13835058055282163712 comes back as 13835058055282164000 with no error
+    at all, so the log has to hand back the exact digits it was given."""
+    log = CaptureLog(tmp_path)
+    log.append_event(parse_event(json.dumps(CAPTURE_PAYLOAD)))
+    record = json.loads(log.path.read_text(encoding="utf-8").splitlines()[0])
+    written = record["media"][0]["decode_key"]
+    assert isinstance(written, str)
+    assert written == "13835058055282163712"
+    # and the raw line has it quoted, so re-reading it cannot turn it into a float
+    assert '"decode_key": "13835058055282163712"' in log.path.read_text(encoding="utf-8")

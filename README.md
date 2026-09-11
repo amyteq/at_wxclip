@@ -18,8 +18,9 @@
             （参考实现是顶替 res.wx.qq.com 上某个脚本的响应体）
         │
         ▼
-③ 注入脚本 hook window.WeixinJSBridge.invoke，从 JSAPI 响应里取出
-   media[0] 的 url + url_token、decode_key、file_size、描述、作者
+③ 注入脚本 hook window.WeixinJSBridge.invoke，从 JSAPI 响应里取出每条
+   media[] 的 url + url_token、decode_key、file_size、描述、作者
+   （实测一次 capture 带 8 条，不是一条；参考实现只取 media[0]）
         │
         ▼
 ④ 回传给 wxclip：POST 同源的 /__wxclip/capture，代理拦下，不转发上游
@@ -52,17 +53,20 @@
 
 ## 技术栈
 
-- **Python**：MITM 代理（注入 + 抓取 `decode_key`）、直连下载、XOR 解密、以及提供管理与
-  下载面板的 web server
-- **JavaScript**：注入到视频号页面里的 hook 脚本；以及 keystream 模块
-  `decrypt.js` —— 它是 5.2 MB 的 Emscripten 产物（wasm 以 base64 内嵌），导出
-  `getDecryptionArray(seedString)`，返回 131072 字节 keystream
+- **Python**：MITM 代理（注入 + 抓取 `decode_key`）、keystream、直连下载、XOR 解密、
+  以及提供管理与下载面板的 web server。运行时**零第三方依赖**（代理那一半用可选的
+  `mitmproxy`，下载走标准库 `urllib`）
+- **JavaScript**：注入到视频号页面里的 hook 脚本 `web/inject.js`
 - **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走
-  Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧要自己打通，这是
-  M0 spike 的首要任务
+  Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见
+  `docs/项目背景.md`
 
-`decrypt.js` 已实测可以在**纯 Node（v24）里脱离 Electron 运行**，只需等它的运行时异步
-初始化完成；也可以把 ISAAC64 移植进 Python 省掉 Node 依赖，细节见 `docs/开发计划.md`。
+**keystream 不再需要 Node。** 参考实现把它交给 `decrypt.js`（5.2 MB 的 Emscripten 产物，
+wasm 以 base64 内嵌，导出 `getDecryptionArray(seedString)`）；M1 把它认出来是标准
+ISAAC64，用 `decode_key` 作种子填进结果数组第 0 槽，每个 64 位字按**大端**吐出 131072
+字节。`wxclip/keystream.py` 就是这个算法的 Python 实现，和 `decrypt.js` 的输出**逐字节
+一致**——`evals/README.md` 的黄金样本表由 `decrypt.js` 生成，`tests/test_keystream.py`
+每次都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。
 
 ## 快速开始
 
@@ -72,26 +76,47 @@ make lint test      # 检查 + 测试
 python -m wxclip --help
 ```
 
-抓取用两步，细节和判定方法见 `docs/M0-操作步骤.md`：
+准备工作两步，细节和判定方法见 `docs/M0-操作步骤.md`：
 
 ```bash
 .venv/bin/python -m wxclip ca      # 生成本地 CA，打印指纹与该装到哪个信任库
 scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
-.venv/bin/python -m wxclip proxy   # 默认 127.0.0.1:8899，在 WeChat 里设为 HTTP 代理后重启它
 ```
+
+然后一条命令从播放到可播放文件（默认抓到第一个就停，文件落在 `downloads/`）：
+
+```bash
+.venv/bin/python -m wxclip capture           # 起代理 → 注入 → 抓 key → 下载 → 解密
+.venv/bin/python -m wxclip capture --count 3 --max-size 200m --wait 120
+```
+
+拆开来用也行：
+
+```bash
+wxclip proxy                                 # 只抓，不下载；事件写进 captures/
+wxclip download --list                       # 看最近一次抓到了哪些 media
+wxclip download --from-capture --index 2     # 按序号直连下载（不走代理）+ 解密
+wxclip download <url> --key <decode_key>     # 手工给地址和 key
+wxclip decrypt <file> --key <decode_key>     # 只对已下载的密文重跑解密
+```
+
+下载是流式的、带进度、可断点续传：中断会留下 `.part`，再跑一次接着下（`.part` 里存的已经是
+解密后的字节，续传时 keystream 会从该偏移接上）。`file_size` 实测跨度 3.8 MB – 585 MB，
+所以任何时候都不会把整个文件读进内存。
 
 代理运行时的产物都在 `captures/`（git 忽略）：`traffic-*.jsonl` 每条 flow 的摘要、
 `captures-*.jsonl` 注入脚本回传的事件（含 `decode_key`）、`pages/*.html` 注入前的原始页面、
 `flows-*.mitm` 完整 flow 存档（`mitmproxy -r` 回看）。
 
 同源的 `/__wxclip/*` 比参考实现的 `res.wx.qq.com` + 哨兵域名 `aaaa.com` 少一层 CSP 与跨域
-风险，代价是页面必须是 HTML 响应（原生渲染的页面注入不进去，这正是 M0 要判定的事）。
+风险，代价是页面必须是 HTML 响应。M0 已经确认 Linux 客户端走的就是
+`channels.weixin.qq.com` 的 H5 页面，注入路线成立。
 
 ## 目录
 
 | 路径       | 说明                                                    |
 |------------|---------------------------------------------------------|
-| `wxclip/`  | Python 包：proxy / keystream 桥接 / downloader / server |
+| `wxclip/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline |
 | `web/`     | 注入脚本与前端页面                                       |
 | `docs/`    | 背景、开发计划、规格说明                                 |
 | `tests/`   | pytest 测试                                              |
@@ -105,10 +130,11 @@ scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat
 
 - 参考实现：https://github.com/harrysun2006/WeChatVideoDownloader
   （上游 lecepin/WeChatVideoDownloader，v2.x 起支持加密视频）
-- keystream 模块：
+- keystream 模块（本项目已移植进 Python，这里留作黄金样本的来源）：
   [`electron/decrypt.js`](https://github.com/harrysun2006/WeChatVideoDownloader/blob/master/electron/decrypt.js)
 - 项目介绍讨论：https://github.com/amyteq/at_wxclip/discussions/2
-- 开发计划 issue：https://github.com/amyteq/at_wxclip/issues/4
+- 开发计划 issue：M0 https://github.com/amyteq/at_wxclip/issues/4 、
+  M1 https://github.com/amyteq/at_wxclip/issues/8
 
 ## 说明
 

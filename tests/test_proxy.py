@@ -265,3 +265,48 @@ def test_options_keep_mitmproxy_from_dialing_out_for_our_own_endpoints(tmp_path)
     assert options["confdir"] == str(tmp_path / "ca")
     assert "save_stream_file" not in options
     assert options["ignore_hosts"]
+
+
+def test_a_capture_is_handed_to_the_event_hook(tmp_path):
+    """`wxclip capture` hangs its downloader here; it runs on the proxy's event loop."""
+    seen = []
+    addon = WxclipAddon(
+        script="/* hook */",
+        echo=lambda line: None,
+        response_factory=make_response,
+        on_event=seen.append,
+    )
+    flow = FakeFlow(
+        host="channels.weixin.qq.com",
+        path=inject.CAPTURE_PATH,
+        method="POST",
+        body=CAPTURE_BODY,
+    )
+    addon.request(flow)
+    assert len(seen) == 1
+    assert seen[0].captures[0].decode_key == "13835058055282163712"
+    assert flow.response.status_code == 204
+
+
+def test_a_broken_event_hook_does_not_break_the_capture_channel(tmp_path):
+    """A download that blows up must still leave the page able to report the next clip."""
+    said = []
+
+    def explode(event):
+        raise RuntimeError("downloader fell over")
+
+    addon = WxclipAddon(
+        script="/* hook */",
+        echo=said.append,
+        response_factory=make_response,
+        on_event=explode,
+    )
+    flow = FakeFlow(
+        host="channels.weixin.qq.com",
+        path=inject.CAPTURE_PATH,
+        method="POST",
+        body=CAPTURE_BODY,
+    )
+    addon.request(flow)
+    assert flow.response.status_code == 204
+    assert any("downloader fell over" in line for line in said)
