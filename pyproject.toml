@@ -22,10 +22,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["wxclip"]
 
-# The hook script lives in web/ for people to read; a wheel carries a copy so the
-# proxy can serve it when wxclip is installed rather than run from a checkout.
+# The hook script and the dashboard live in web/ for people to read; a wheel carries a
+# copy of each so the proxy and the server can serve them when wxclip is installed
+# rather than run from a checkout (see wxclip.inject.asset_source).
 [tool.hatch.build.targets.wheel.force-include]
 "web/inject.js" = "wxclip/_web/inject.js"
+"web/dashboard.html" = "wxclip/_web/dashboard.html"
+"web/dashboard.js" = "wxclip/_web/dashboard.js"
 
 [tool.ruff]
 line-length = 100

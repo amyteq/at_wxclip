@@ -174,11 +174,20 @@ class CaptureRunner:
         return "\n".join(lines)
 
 
-def newest_capture_log(capture_dir: Path, name: str = "captures") -> Path | None:
-    """The most recently written `captures/captures-*.jsonl`, if there is one."""
-    logs = sorted(
+def capture_logs(capture_dir: Path, name: str = "captures") -> list[Path]:
+    """Every `captures/<name>-*.jsonl`, most recently written first.
+
+    The CLI wants only the newest one; the dashboard lists them all, which is why the
+    glob lives here rather than in either caller.
+    """
+    return sorted(
         Path(capture_dir).glob(f"{name}-*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
     )
+
+
+def newest_capture_log(capture_dir: Path, name: str = "captures") -> Path | None:
+    """The most recently written `captures/captures-*.jsonl`, if there is one."""
+    logs = capture_logs(capture_dir, name)
     return logs[0] if logs else None
 
 

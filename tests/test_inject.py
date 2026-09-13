@@ -74,6 +74,17 @@ def test_hook_script_is_fully_templated():
     assert '"decode_key"' in script
 
 
+def test_asset_source_serves_the_dashboard_from_the_same_place_as_the_hook_script():
+    assert inject.asset_source(inject.SCRIPT_NAME) == inject.script_source()
+    assert inject.asset_source("dashboard.html").is_file()
+    assert inject.asset_source("dashboard.js").is_file()
+
+
+def test_a_missing_asset_says_where_it_looked():
+    with pytest.raises(FileNotFoundError, match="web"):
+        inject.asset_source("nope.js")
+
+
 def test_hook_script_snippet_flag_is_a_boolean_literal():
     assert "INCLUDE_SNIPPET = false" in inject.hook_script(include_snippet=False)
     assert "INCLUDE_SNIPPET = true" in inject.hook_script(include_snippet=True)

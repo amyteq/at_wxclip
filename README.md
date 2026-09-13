@@ -104,6 +104,31 @@ wxclip decrypt <file> --key <decode_key>     # 只对已下载的密文重跑解
 解密后的字节，续传时 keystream 会从该偏移接上）。`file_size` 实测跨度 3.8 MB – 585 MB，
 所以任何时候都不会把整个文件读进内存。
 
+### 面板（浏览器里挑）
+
+一次 capture 会带回整屏 feed（实测 8 条），命令行里只能靠 `--index` 猜编号；面板就是为这件事
+来的 —— 一眼看完再点哪条：
+
+```bash
+.venv/bin/python -m wxclip serve            # 默认 http://127.0.0.1:8080
+.venv/bin/python -m wxclip serve --port 9000 --dir ./downloads
+```
+
+它和 `wxclip proxy` 是两个进程：面板只探一下代理端口通不通，并把该跑的命令显示出来。典型用法
+是两个终端，一个跑 `wxclip proxy`，一个跑 `wxclip serve`，然后在 WeChat 里播视频、在浏览器里
+点下载。面板每次请求都重读 `captures/`，所以不用重启它。
+
+面板上有：代理状态、捕获列表（说明、大小、`decode_key`、是否已下载）、下载进度、以及下载目录里
+的文件（可以直接播或另存为；`/files/` 支持 Range，所以拖进度条也没问题）。
+
+**面板不接受 URL**，只接受它刚展示过的那条记录的裸 `url`，不在抓取记录里的一概拒绝 —— 否则浏览器
+里的任意页面都能驱使这个进程去抓任意地址并写进下载目录。同理，`decode_key` 出去是 JSON 字符串，
+页面只把它当文本显示：裸数字一经 `JSON.parse` 就会静默丢精度。
+
+下载用的仍然是 `wxclip download` 那套代码、同一套文件命名，所以面板和 CLI 看到的是同一批文件：
+已经下过的那条会标上「已下载」、按钮变成「重新下载」—— 明确点它才会再抓一遍。文件是在上一次轮询
+之后才出现的话（比如 CLI 那边刚下完），服务端会直接回「已存在」，不会重抓 585 MB。
+
 代理运行时的产物都在 `captures/`（git 忽略）：`traffic-*.jsonl` 每条 flow 的摘要、
 `captures-*.jsonl` 注入脚本回传的事件（含 `decode_key`）、`pages/*.html` 注入前的原始页面、
 `flows-*.mitm` 完整 flow 存档（`mitmproxy -r` 回看）。
