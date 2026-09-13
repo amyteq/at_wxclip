@@ -1,0 +1,21 @@
+价值 15999 元视觉效果
+普通 Mac 实现折玛屏透视
+开发者直接开源了
+开发者 Makito 开源项目 Mac-Duo
+转透视效果移植到 MacBook 上。原本标价 15999 元的视
+觉效果，现在开源开放。
+工具运行在 macOS 菜单栏，实时处理画面，转动笔记本
+时，屏幕画面会呈现类似折县手机的空间透视效果。项目
+了人 GitHub ，采用 Apache2.0 开源协议，代码可以
+普通 Mac RT SHSM
+Makito
+开发者 Makito 开源项目 Mac- arr 将 Te Duo 的翻
+ard GitHub, 3B Apache2.0 开源协议，代码可以下
+体验。
+开发者 Makito 开源项目Mac-Duo，将iPhone Duo 的翻
+rd GitHub, 34) Apache2.0 Aim, ia
+普通 Mac KMS HSM
+工具运行在 macOs 菜单栏，实时
+时，屏幕画面会呈现类似折且手机
+已上传 GitHub ，采用 Apache2.0 #
+a GitHub，采用Apache20开源协议，代码可以下

@@ -137,11 +137,64 @@ wxclip decrypt <file> --key <decode_key>     # 只对已下载的密文重跑解
 风险，代价是页面必须是 HTML 响应。M0 已经确认 Linux 客户端走的就是
 `channels.weixin.qq.com` 的 H5 页面，注入路线成立。
 
+## 视频后处理：截屏 / 文字 / 总结
+
+拿到可播放文件之后，一条命令走完三步，产物落在 `processed/<文件名>/`（不进版本库）：
+
+```bash
+wxclip process downloads/xxx.mp4              # 截屏 → OCR → 总结
+wxclip process downloads/xxx.mp4 --no-summary # 只到文字，不调模型、不需要凭据
+```
+
+```text
+processed/xxx/
+├── shots.json              # 选了哪几帧、为什么选、当时的场景分
+├── shot-001-t0.00s.jpg …   # 关键帧截屏
+├── text.txt                # 去重后的文字，喂给模型的就是它
+├── text.json               # 每张截屏各读出什么，原始输出也留着
+└── summary.md              # 一段总结（含模型、档位、token 数）
+```
+
+三步也能单独跑，产物互相复用 —— 改 prompt 重跑一次总结，不会重新截屏、重新 OCR：
+
+```bash
+wxclip shots <视频>                    # 只截屏
+wxclip extract --check                 # 先看 OCR 能不能跑（缺哪个语言包）
+wxclip extract <视频|目录>             # 只提文字
+wxclip summarize <视频|目录>           # 只总结
+wxclip summarize <目录> --dry-run      # 把请求体打出来看，不发请求
+```
+
+**截屏**用 ffmpeg 的场景检测（`select=gt(scene,0.2)`）挑关键帧，检测出的变化太少就退回
+按时长均匀取，所以再平的片子也有截屏。检测只解一遍码，取帧靠 `-ss` 关键帧跳转。
+
+**文字提取先走 OCR 这条路**：视频号下载下来没有字幕流（字幕是烧进画面的），而实测样本
+本身就是一张文字卡片 —— 内容全在画面上，没有旁白。截屏已经有了，OCR 只是每张多调一次
+`tesseract`，不下模型、不加 Python 依赖。同一张卡片跨帧重复的行会按相似度合并，但**数字
+不同就不算重复**（宁可留一条近似重复，也不能把金额、版本号删掉）。语音转写是记在册上的
+下一条路，`text.json` 里的 `source` 字段就是留给它区分的。
+
+```bash
+# 缺中文语言包时 extract --check 会把两种装法都告诉你
+sudo pacman -S tesseract-data-chi_sim tesseract-data-eng     # Arch
+wxclip extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的那条路
+```
+
+**总结**把文字和几张截屏（跨全片均匀取，不是取前几张）一起发给 Messages API。截屏在这里
+不是装饰：OCR 把「折叠屏」读成「折玛屏」「折私屏」，模型对着图才知道该改成什么。prompt 在
+`wxclip/summarize.py` 的 `SYSTEM_PROMPT`，固定样本和评判标准在 `evals/summarize/`。
+凭据从环境变量或 `.env` 读 `ANTHROPIC_API_KEY`（或 `ANTHROPIC_AUTH_TOKEN`）。
+
+这一步**没有引入 Python 依赖**：anthropic SDK 装不进同一个 venv（它要 httpx2 →
+httpcore2 → h11>=0.16，mitmproxy 把 h11 钉在更低的版本），真装了就会变成
+「能总结的环境跑不了 capture」。所以请求用标准库 `urllib` 发，理由写在
+`wxclip/summarize.py` 的模块注释里。
+
 ## 目录
 
 | 路径       | 说明                                                    |
 |------------|---------------------------------------------------------|
-| `wxclip/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline |
+| `wxclip/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server / media / frames / extract / summarize / postprocess |
 | `web/`     | 注入脚本与前端页面                                       |
 | `docs/`    | 背景、开发计划、规格说明                                 |
 | `tests/`   | pytest 测试                                              |
@@ -159,7 +212,8 @@ wxclip decrypt <file> --key <decode_key>     # 只对已下载的密文重跑解
   [`electron/decrypt.js`](https://github.com/harrysun2006/WeChatVideoDownloader/blob/master/electron/decrypt.js)
 - 项目介绍讨论：https://github.com/amyteq/at_wxclip/discussions/2
 - 开发计划 issue：M0 https://github.com/amyteq/at_wxclip/issues/4 、
-  M1 https://github.com/amyteq/at_wxclip/issues/8
+  M1 https://github.com/amyteq/at_wxclip/issues/8 、
+  M3 https://github.com/amyteq/at_wxclip/issues/10
 
 ## 说明
 

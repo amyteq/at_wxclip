@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from wxclip import __version__, ca, downloader, inject, pipeline
+from wxclip import __version__, ca, downloader, frames, inject, pipeline, postprocess
 from wxclip import decrypt as decrypt_module
+from wxclip import extract as extract_module
 from wxclip import proxy as proxy_module  # mitmproxy-free at import time
 from wxclip import server as server_module
-from wxclip.config import Settings
+from wxclip import summarize as summarize_module
+from wxclip.config import Settings, read_dotenv
 from wxclip.downloader import DownloadError, human_size
 from wxclip.keystream import KeystreamError
+from wxclip.media import MediaError, probe
+from wxclip.summarize import SummarizeError
 
 # Subcommands land with their milestones; see docs/开发计划.md.
 PLANNED: dict[str, str] = {}
@@ -98,6 +104,114 @@ def _add_fetch_options(parser: argparse.ArgumentParser, defaults: Settings) -> N
         type=float,
         default=downloader.DEFAULT_TIMEOUT,
         help=f"per-request timeout in seconds (default {downloader.DEFAULT_TIMEOUT:g})",
+    )
+
+
+def _add_shot_options(parser: argparse.ArgumentParser) -> None:
+    """Options shared by `shots` and `process` - they take stills the same way."""
+    parser.add_argument(
+        "--scene",
+        type=float,
+        default=frames.DEFAULT_SCENE_THRESHOLD,
+        metavar="SCORE",
+        help="how different a frame must be to count as a new shot, 0..1 "
+        f"(default {frames.DEFAULT_SCENE_THRESHOLD})",
+    )
+    parser.add_argument(
+        "--every",
+        type=float,
+        metavar="SEC",
+        help="ignore scene detection and take a still every SEC seconds",
+    )
+    parser.add_argument(
+        "--max-shots",
+        type=int,
+        default=frames.DEFAULT_MAX_SHOTS,
+        help=f"keep at most this many stills (default {frames.DEFAULT_MAX_SHOTS})",
+    )
+    parser.add_argument(
+        "--min-shots",
+        type=int,
+        default=frames.DEFAULT_MIN_SHOTS,
+        help="below this many scene changes, fall back to evenly spaced stills "
+        f"(default {frames.DEFAULT_MIN_SHOTS})",
+    )
+    parser.add_argument(
+        "--shot-width",
+        type=int,
+        default=frames.DEFAULT_WIDTH,
+        metavar="PX",
+        help=f"scale stills down to this width if wider (default {frames.DEFAULT_WIDTH}; "
+        "0 keeps the native size)",
+    )
+    parser.add_argument(
+        "--quality",
+        type=int,
+        default=frames.DEFAULT_QUALITY,
+        help=f"jpeg quality, 2 is best (default {frames.DEFAULT_QUALITY})",
+    )
+
+
+def _add_ocr_options(parser: argparse.ArgumentParser) -> None:
+    """Options shared by `extract` and `process`."""
+    parser.add_argument(
+        "--lang",
+        default=extract_module.DEFAULT_LANG,
+        help=f"tesseract languages (default {extract_module.DEFAULT_LANG})",
+    )
+    parser.add_argument(
+        "--psm",
+        type=int,
+        default=extract_module.DEFAULT_PSM,
+        help=f"tesseract page segmentation mode (default {extract_module.DEFAULT_PSM})",
+    )
+    parser.add_argument(
+        "--tessdata-dir",
+        type=Path,
+        help="directory of .traineddata files, for language data installed without root",
+    )
+    parser.add_argument(
+        "--similarity",
+        type=float,
+        default=extract_module.DEFAULT_SIMILARITY,
+        help="above this, two lines count as the same caption read twice "
+        f"(default {extract_module.DEFAULT_SIMILARITY})",
+    )
+
+
+def _add_model_options(parser: argparse.ArgumentParser) -> None:
+    """Options shared by `summarize` and `process`."""
+    parser.add_argument(
+        "--model",
+        default=summarize_module.DEFAULT_MODEL,
+        help=f"which model to ask (default {summarize_module.DEFAULT_MODEL})",
+    )
+    parser.add_argument(
+        "--effort",
+        default=summarize_module.DEFAULT_EFFORT,
+        choices=["low", "medium", "high", "xhigh", "max"],
+        help=f"how hard it should think (default {summarize_module.DEFAULT_EFFORT})",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=summarize_module.DEFAULT_MAX_TOKENS,
+        help=f"response ceiling (default {summarize_module.DEFAULT_MAX_TOKENS})",
+    )
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=summarize_module.DEFAULT_MAX_IMAGES,
+        help="how many stills to send alongside the text "
+        f"(default {summarize_module.DEFAULT_MAX_IMAGES}; 0 sends text only)",
+    )
+    parser.add_argument(
+        "--image-width",
+        type=int,
+        default=summarize_module.DEFAULT_IMAGE_WIDTH,
+        metavar="PX",
+        help=f"downscale those stills to this width (default "
+        f"{summarize_module.DEFAULT_IMAGE_WIDTH}; 0 sends them as they are)",
     )
 
 
@@ -249,6 +363,111 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
         default=defaults.proxy_port,
         help="proxy port to report the status of",
     )
+    shots = sub.add_parser(
+        "shots",
+        help="take keyframe screenshots of a downloaded video",
+        description=(
+            "Picks the moments where the picture actually changes - ffmpeg's scene score - "
+            "and writes a still for each into the clip's own directory, alongside a "
+            "shots.json saying what was chosen and when. A clip with nothing to detect "
+            "falls back to evenly spaced stills."
+        ),
+    )
+    shots.add_argument("video", type=Path, help="a decrypted, playable file")
+    shots.add_argument(
+        "--out", type=Path, default=defaults.process_dir, help="root for per-clip directories"
+    )
+    shots.add_argument(
+        "--redo", action="store_true", help="take the stills again instead of reusing shots.json"
+    )
+    _add_shot_options(shots)
+
+    extract = sub.add_parser(
+        "extract",
+        help="read the text in a clip's stills with OCR",
+        description=(
+            "OCRs the stills and folds them into one transcript, dropping the captions "
+            "that repeat across consecutive frames. Give it a video and it takes the "
+            "stills first; give it a directory from an earlier run and it reuses them. "
+            "Needs tesseract and the language data - `--check` says whether they are there."
+        ),
+    )
+    extract.add_argument(
+        "target", type=Path, nargs="?", help="a video, or a directory holding shots.json"
+    )
+    extract.add_argument(
+        "--out", type=Path, default=defaults.process_dir, help="root for per-clip directories"
+    )
+    extract.add_argument(
+        "--check", action="store_true", help="report whether OCR can run at all, and stop"
+    )
+    extract.add_argument(
+        "--redo", action="store_true", help="run OCR again instead of reusing text.json"
+    )
+    _add_ocr_options(extract)
+    _add_shot_options(extract)
+
+    summarize = sub.add_parser(
+        "summarize",
+        help="ask a model what the clip was about",
+        description=(
+            "Sends the extracted text and a few of the stills to the Messages API and "
+            "writes summary.md. Give it a video and it runs the two earlier steps first; "
+            "give it a directory and it reuses what is in there, which is what makes "
+            "iterating on the prompt cheap. Needs ANTHROPIC_API_KEY (or "
+            "ANTHROPIC_AUTH_TOKEN); --dry-run prints the request instead of sending it."
+        ),
+    )
+    summarize.add_argument(
+        "target", type=Path, nargs="?", help="a video, or a directory holding text.json"
+    )
+    summarize.add_argument(
+        "--out",
+        type=Path,
+        # No default, so `--text FILE` can tell "write next to the text file" (nothing
+        # given) apart from "write here" - which is how the evals/ samples are rerun
+        # without dropping output into the fixture directory.
+        help=f"root for per-clip directories (default {defaults.process_dir}/)",
+    )
+    summarize.add_argument(
+        "--text", type=Path, help="summarize this text file instead of running OCR"
+    )
+    summarize.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would be sent, including the prompt, and call nothing",
+    )
+    summarize.add_argument(
+        "--redo", action="store_true", help="redo the earlier steps rather than reusing them"
+    )
+    _add_model_options(summarize)
+    _add_ocr_options(summarize)
+    _add_shot_options(summarize)
+
+    process = sub.add_parser(
+        "process",
+        help="screenshots, text and summary in one go",
+        description=(
+            "Runs all three steps over a playable file and leaves everything in one "
+            "directory. Each artefact is written as soon as it exists, so a failure in "
+            "the model call still leaves the stills and the transcript behind."
+        ),
+    )
+    process.add_argument("video", type=Path, help="a decrypted, playable file")
+    process.add_argument(
+        "--out", type=Path, default=defaults.process_dir, help="root for per-clip directories"
+    )
+    process.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="stop after the text - no model call, no credentials needed",
+    )
+    process.add_argument(
+        "--redo", action="store_true", help="redo every step instead of reusing earlier output"
+    )
+    _add_shot_options(process)
+    _add_ocr_options(process)
+    _add_model_options(process)
 
     for name, description in PLANNED.items():
         sub.add_parser(name, help=f"(planned) {description}")
@@ -522,6 +741,179 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return _fail(f"cannot listen on {args.host}:{args.port}: {exc}")
 
 
+def _shot_kwargs(args: argparse.Namespace) -> dict:
+    return {
+        "threshold": args.scene,
+        "max_shots": args.max_shots,
+        "min_shots": args.min_shots,
+        "every": args.every,
+        "width": args.shot_width or None,
+        "quality": args.quality,
+    }
+
+
+def _ocr_kwargs(args: argparse.Namespace) -> dict:
+    return {
+        "lang": args.lang,
+        "psm": args.psm,
+        "tessdata_dir": args.tessdata_dir,
+        "threshold": args.similarity,
+    }
+
+
+def _model_kwargs(args: argparse.Namespace) -> dict:
+    return {
+        "model": args.model,
+        "effort": args.effort,
+        "max_tokens": args.max_tokens,
+        "max_images": args.max_images,
+        "image_width": args.image_width or None,
+    }
+
+
+def _env() -> dict[str, str]:
+    """`.env` under the real environment, the same precedence `Settings.from_env` uses.
+
+    So a key can live in the git-ignored `.env` next to the proxy settings instead of
+    having to be exported into every shell.
+    """
+    return {**read_dotenv(Path(".env")), **os.environ}
+
+
+def _resolve(target: Path, root: Path) -> tuple[Path | None, Path]:
+    """`(video, bundle directory)` from whichever of the two the operator named."""
+    if target.is_dir():
+        return postprocess.find_video(target), target
+    if target.is_file():
+        return target, postprocess.bundle_dir(root, target)
+    raise FileNotFoundError(f"{target} is neither a file nor a directory")
+
+
+def cmd_shots(args: argparse.Namespace) -> int:
+    try:
+        shots = postprocess.ensure_shots(
+            args.video,
+            postprocess.bundle_dir(args.out, args.video),
+            redo=args.redo,
+            **_shot_kwargs(args),
+        )
+    except (MediaError, OSError) as exc:
+        return _fail(str(exc))
+    return 0 if shots.shots else 1
+
+
+def cmd_extract(args: argparse.Namespace) -> int:
+    if args.check:
+        try:
+            print(extract_module.check_tesseract(args.lang))
+        except MediaError as exc:
+            return _fail(str(exc))
+        return 0
+    if args.target is None:
+        return _fail("give a video or a directory (or --check to test the OCR setup)")
+
+    try:
+        video, directory = _resolve(args.target, args.out)
+        if video is None:
+            return _fail(f"{directory} has no shots.json - run `wxclip shots` on the video first")
+        shots = postprocess.ensure_shots(video, directory, redo=args.redo, **_shot_kwargs(args))
+        extraction = postprocess.ensure_text(shots, directory, redo=args.redo, **_ocr_kwargs(args))
+    except (MediaError, FileNotFoundError, OSError) as exc:
+        return _fail(str(exc))
+    print(f"-> {directory / extract_module.TEXT_NAME}")
+    return 0 if extraction.lines else 1
+
+
+def _redact(body: dict) -> dict:
+    """The request with the image blobs replaced by their size.
+
+    `--dry-run` is for reading the prompt, and four base64 jpegs would bury it.
+    """
+    shown = json.loads(json.dumps(body))
+    for message in shown.get("messages") or []:
+        for block in message.get("content") or []:
+            source = block.get("source") if isinstance(block, dict) else None
+            if isinstance(source, dict) and "data" in source:
+                source["data"] = f"<{len(source['data'])} base64 chars>"
+    return shown
+
+
+def cmd_summarize(args: argparse.Namespace) -> int:
+    text = ""
+    shots = None
+    info = None
+
+    try:
+        if args.text is not None:
+            text = args.text.read_text(encoding="utf-8")
+            directory = args.out or args.text.parent
+        else:
+            if args.target is None:
+                return _fail("give a video or a directory, or --text FILE")
+            video, directory = _resolve(
+                args.target, args.out or Settings.from_env(dotenv=Path(".env")).process_dir
+            )
+            if video is None:
+                return _fail(f"{directory} has no shots.json - run `wxclip shots` first")
+            info = probe(video)
+            shots = postprocess.ensure_shots(
+                video, directory, info=info, redo=args.redo, **_shot_kwargs(args)
+            )
+            text = postprocess.ensure_text(
+                shots, directory, redo=args.redo, **_ocr_kwargs(args)
+            ).text
+
+        if args.dry_run:
+            # Built with the same arguments the real call would use, so what is printed
+            # is the request itself and not an approximation of it.
+            content = summarize_module.build_content(
+                text,
+                summarize_module.pick_images(shots.shots if shots else (), args.max_images),
+                info=info,
+                image_width=args.image_width or None,
+            )
+            body = summarize_module.build_body(
+                content,
+                model=args.model,
+                max_tokens=args.max_tokens,
+                effort=args.effort,
+            )
+            print(json.dumps(_redact(body), ensure_ascii=False, indent=2))
+            return 0
+
+        summary = summarize_module.summarize(
+            text, shots or (), info=info, env=_env(), **_model_kwargs(args)
+        )
+    except (MediaError, SummarizeError, FileNotFoundError, OSError) as exc:
+        return _fail(str(exc))
+
+    path = summarize_module.write_summary(summary, directory)
+    print(summary.summary())
+    print(f"-> {path}")
+    return 0 if summary.ok else 1
+
+
+def cmd_process(args: argparse.Namespace) -> int:
+    try:
+        bundle = postprocess.process(
+            args.video,
+            args.out,
+            shot_options=_shot_kwargs(args),
+            extract_options=_ocr_kwargs(args),
+            summarize_options={**_model_kwargs(args), "env": _env()},
+            with_summary=not args.no_summary,
+            redo=args.redo,
+        )
+    except (MediaError, SummarizeError, OSError) as exc:
+        return _fail(str(exc))
+    print(bundle.report())
+    if bundle.model_summary is not None and not bundle.model_summary.ok:
+        return 1
+    if bundle.extraction is not None and bundle.extraction.is_empty:
+        return 1
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -542,6 +934,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "decrypt": cmd_decrypt,
         "capture": cmd_capture,
         "serve": cmd_serve,
+        "shots": cmd_shots,
+        "extract": cmd_extract,
+        "summarize": cmd_summarize,
+        "process": cmd_process,
     }
     return commands[args.command](args)
 

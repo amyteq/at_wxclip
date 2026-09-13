@@ -229,3 +229,131 @@ def test_serve_reports_a_port_it_cannot_have(capsys):
         port = taken.getsockname()[1]
         assert main(["serve", "--host", "127.0.0.1", "--port", str(port)]) == 1
     assert "cannot listen" in capsys.readouterr().err
+
+
+# -- M3: post-processing ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("command", ["shots", "extract", "summarize", "process"])
+def test_m3_commands_are_wired_up(command):
+    assert command not in PLANNED
+    assert build_parser().parse_args([command, "x"]).command == command
+
+
+def test_extract_check_reports_the_ocr_setup(monkeypatch, capsys):
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/tesseract")
+    monkeypatch.setattr(
+        "wxclip.extract.run_tool", lambda *a, **kw: "List of languages (2):\nchi_sim\neng\n"
+    )
+    assert main(["extract", "--check"]) == 0
+    assert "is ready" in capsys.readouterr().out
+
+
+def test_extract_without_a_target_says_what_it_wants(capsys):
+    assert main(["extract"]) == 1
+    assert "give a video or a directory" in capsys.readouterr().err
+
+
+def test_summarize_without_a_target_says_what_it_wants(capsys):
+    assert main(["summarize"]) == 1
+    assert "give a video or a directory" in capsys.readouterr().err
+
+
+def test_a_target_that_does_not_exist_is_reported(tmp_path, capsys):
+    assert main(["extract", str(tmp_path / "nope.mp4")]) == 1
+    assert "neither a file nor a directory" in capsys.readouterr().err
+
+
+def test_a_directory_without_a_manifest_is_reported(tmp_path, capsys):
+    assert main(["extract", str(tmp_path)]) == 1
+    assert "no shots.json" in capsys.readouterr().err
+
+
+def test_summarize_can_take_a_text_file_on_its_own(tmp_path, monkeypatch, capsys):
+    """For working on the prompt without a video anywhere near it."""
+    transcript = tmp_path / "text.txt"
+    transcript.write_text("价值 15999 元视觉效果\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "wxclip.summarize.post_messages",
+        lambda body, **kw: {
+            "model": "claude-opus-5",
+            "content": [{"type": "text", "text": "## 一句话概要\n\n讲了一个开源项目。"}],
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        },
+    )
+    assert main(["summarize", "--text", str(transcript)]) == 0
+    assert (tmp_path / "summary.md").is_file()
+    assert "claude-opus-5" in capsys.readouterr().out
+
+
+def test_summarize_dry_run_prints_the_request_and_calls_nothing(tmp_path, monkeypatch, capsys):
+    transcript = tmp_path / "text.txt"
+    transcript.write_text("价值 15999 元视觉效果\n", encoding="utf-8")
+
+    def forbidden(*a, **kw):  # pragma: no cover - must not be reached
+        raise AssertionError("--dry-run must not call the API")
+
+    monkeypatch.setattr("wxclip.summarize.post_messages", forbidden)
+    assert main(["summarize", "--text", str(transcript), "--dry-run"]) == 0
+
+    body = json.loads(capsys.readouterr().out)
+    assert body["model"] == "claude-opus-5"
+    assert body["output_config"]["effort"] == "medium"
+    assert "价值 15999 元视觉效果" in body["messages"][0]["content"][0]["text"]
+    assert not (tmp_path / "summary.md").exists()
+
+
+def test_summarize_without_credentials_says_what_to_set(tmp_path, monkeypatch, capsys):
+    transcript = tmp_path / "text.txt"
+    transcript.write_text("有文字\n", encoding="utf-8")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)  # so a real .env cannot leak in
+    assert main(["summarize", "--text", str(transcript)]) == 1
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
+
+
+def test_the_dry_run_redacts_the_image_blobs():
+    """Four base64 jpegs would bury the prompt that --dry-run exists to show."""
+    from wxclip.__main__ import _redact
+
+    body = {
+        "messages": [
+            {
+                "content": [
+                    {"type": "text", "text": "keep me"},
+                    {"type": "image", "source": {"type": "base64", "data": "A" * 5000}},
+                ]
+            }
+        ]
+    }
+    shown = _redact(body)
+    assert shown["messages"][0]["content"][0]["text"] == "keep me"
+    assert shown["messages"][0]["content"][1]["source"]["data"] == "<5000 base64 chars>"
+    assert body["messages"][0]["content"][1]["source"]["data"] == "A" * 5000  # not mutated
+
+
+def test_shot_width_zero_means_native_size():
+    from wxclip.__main__ import _shot_kwargs
+
+    args = build_parser().parse_args(["shots", "v.mp4", "--shot-width", "0"])
+    assert _shot_kwargs(args)["width"] is None
+
+
+def test_summarize_writes_where_out_says(tmp_path, monkeypatch):
+    """Without --out the summary lands beside the text file, which would drop output into
+    the read-only fixtures in evals/summarize/."""
+    transcript = tmp_path / "text.txt"
+    transcript.write_text("价值 15999 元视觉效果\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "wxclip.summarize.post_messages",
+        lambda body, **kw: {
+            "model": "claude-opus-5",
+            "content": [{"type": "text", "text": "## 一句话概要\n\n讲了一个开源项目。"}],
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+        },
+    )
+    out = tmp_path / "runs"
+    assert main(["summarize", "--text", str(transcript), "--out", str(out)]) == 0
+    assert (out / "summary.md").is_file()
+    assert not (tmp_path / "summary.md").exists()

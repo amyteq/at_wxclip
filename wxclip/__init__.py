@@ -13,6 +13,13 @@ Modules (see docs/开发计划.md):
     pipeline    - capture event -> chosen media -> downloaded, decrypted file
     server      - light web server backing the admin / download dashboard
     ca, config, inject - the CA, settings, and what gets injected where
+
+Post-processing, on a file that is already playable (M3):
+    media       - finding ffmpeg / ffprobe, and what ffprobe says about a file
+    frames      - keyframe screenshots, chosen by scene change
+    extract     - the text in those stills, by OCR
+    summarize   - transcript + stills -> a written summary, via the Messages API
+    postprocess - the three of them in sequence, one directory per clip
 """
 
 __version__ = "0.0.1"

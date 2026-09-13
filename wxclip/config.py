@@ -49,6 +49,9 @@ class Settings:
     server_port: int = DEFAULT_SERVER_PORT
     download_dir: Path = Path("downloads")
     capture_dir: Path = Path("captures")
+    #: Where post-processing puts a clip's stills, transcript and summary - one
+    #: directory per clip. Separate from `download_dir` so the videos stay a flat list.
+    process_dir: Path = Path("processed")
     ca_dir: Path = Path.home() / ".config" / "wxclip" / "ca"
 
     @classmethod
@@ -74,5 +77,6 @@ class Settings:
             server_port=port("WXCLIP_SERVER_PORT", DEFAULT_SERVER_PORT),
             download_dir=Path(merged.get("WXCLIP_DOWNLOAD_DIR") or "downloads"),
             capture_dir=Path(merged.get("WXCLIP_CAPTURE_DIR") or "captures"),
+            process_dir=Path(merged.get("WXCLIP_PROCESS_DIR") or "processed"),
             ca_dir=Path(merged.get("WXCLIP_CA_DIR") or _config_home(merged) / "wxclip" / "ca"),
         )
