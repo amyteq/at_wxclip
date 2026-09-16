@@ -13,6 +13,7 @@
 | `evals/`   | 固定样本 + 校验脚本：解码是否仍然有效、提取/总结质量是否退化            |
 | `processed/` | 后处理产物：每条片子一个子目录（截屏 + `text.txt` + `summary.md`），不进版本库，删了重跑即可 |
 | `temp/`    | 临时文件，git 忽略，随时可删                                           |
+| `.claude/skills/` | 本仓库自带的 Claude Code skill：`at-review-pr`（有界的 PR review/fix 循环）、`at-refine-issue`（把 issue 细化成可独立执行的工单）。正文在这里，`.agents/skills/` 下是仓库内相对软链接，Codex 读的是同一份 |
 
 ## 什么不进 Git
 

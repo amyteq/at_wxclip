@@ -11,4 +11,11 @@ Codex CLI 会从当前目录向上查找 `.agents/skills`，再回落到 `$HOME/
 .agents/skills/wx-capture -> ../../.claude/skills/wx-capture
 ```
 
-目前还没有 Skill，`skills/` 是空目录占位。
+目前有两条软链接，指向仓库自带的两个开发流程 skill：
+
+```text
+.agents/skills/at-review-pr    -> ../../.claude/skills/at-review-pr
+.agents/skills/at-refine-issue -> ../../.claude/skills/at-refine-issue
+```
+
+两者的正文与用法见 `README.md` 的「Claude Code 项目 skill」一节。Codex 不会像 Claude Code 那样把它们自动挂成斜杠命令，用的时候把 `SKILL.md` 的路径显式指给它。

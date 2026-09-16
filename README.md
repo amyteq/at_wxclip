@@ -157,8 +157,24 @@ wxclip extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 | `scripts/` | 给人手动执行的入口脚本                                   |
 | `tools/`   | 辅助小工具，不属于交付包                                 |
 | `evals/`   | 解码/提取/总结质量的固定样本与校验                        |
+| `.claude/skills/` | 本仓库自带的 Claude Code skill（`at-review-pr` / `at-refine-issue`），见下一节 |
 
 详见 `docs/目录说明.md`；智能体协作约定见 `AGENTS.md`。
+
+## Claude Code 项目 skill
+
+仓库自带两个开发流程 skill，正文在 `.claude/skills/<name>/SKILL.md`，`.agents/skills/` 下是指向它们的仓库内相对软链接。两个都只读写 issue、PR 与评论，不改 `wxclip/`、`web/`、`tests/` 里的任何代码。
+
+| Skill | 调用 | 做什么 |
+|-------|------|--------|
+| `at-review-pr` | `/at-review-pr [pr=<n>] [rounds] [reviewer] [writer]` | 用互相独立的 Codex / Claude Code 会话跑有界的「review → 修/申辩/推迟 → 再 review」循环，每条发现有稳定 ID 与状态机，批准前必须对最终 head 跑一次完整 review |
+| `at-refine-issue` | `/at-refine-issue <issue-url\|number> [说明]` | 把一条已有 issue 改写成工单：编号稳定的验收标准（`AC1`…`ACn`）、一条自包含的任务 comment、以及可复制的启动 prompt |
+
+参数默认值：`at-review-pr` 的 `rounds` 默认 `10`、`reviewer` 默认 `codex`、`writer` 默认 `claude`；`pr=<n>` 省略时按「显式上下文 → 当前分支唯一的 open PR」解析，解析不出来就问，不猜。`at-refine-issue` 的第一个参数是必需的 issue URL 或编号，后面跟可选的细化说明。
+
+两个 skill 都不会自己派工：`at-refine-issue` 产出的工单在人发出启动 prompt 之前是死的，`at-review-pr` 也不会合并 PR。
+
+**Codex 侧要显式指路。** Codex CLI 会向上查找 `.agents/skills`，但不会像 Claude Code 那样把 skill 当斜杠命令自动挂上来，所以在 Codex 里用的时候，直接把文件指给它，例如 `按 .claude/skills/at-review-pr/SKILL.md 跑 PR #14 的 review 循环`。软链接只是让 `.agents/skills/at-review-pr/SKILL.md` 这条路径也能读到同一份正文。
 
 ## 参考
 
