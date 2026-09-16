@@ -1,12 +1,10 @@
 # at_wxclip
 
-把 Linux 版 WeChat 里能播放的视频号视频抓下来、解密成可播放文件，再做截屏、文字提取和
-总结。一个 headless 命令行工具 + 一个轻量 web server 作为 GUI。
+把 Linux 版 WeChat 里能播放的视频号视频抓下来、解密成可播放文件，再做截屏、文字提取和总结。一个 headless 命令行工具 + 一个轻量 web server 作为 GUI。
 
 ## 工作原理
 
-机制以参考实现 [`WeChatVideoDownloader`](https://github.com/harrysun2006/WeChatVideoDownloader)
-的代码为准（已逐行核对，见 `docs/项目背景.md`）：
+机制以参考实现 [`WeChatVideoDownloader`](https://github.com/harrysun2006/WeChatVideoDownloader) 的代码为准（已逐行核对，见 `docs/项目背景.md`）：
 
 ```text
 ① WeChat 打开视频号页面
@@ -39,34 +37,17 @@
 
 ### 三个容易搞错的地方
 
-1. **decoder 不是「解析真实下载地址」，而是解密已下载文件的头部。** 下载地址本身不需要
-   解析，它就是 JSAPI 响应里的 `url + url_token`；`decrypt.js` 只负责用 `decode_key`
-   生成 keystream。项目介绍讨论里「再经过 decoder 来解析出真实的下载地址」这句话与参考
-   实现的代码不一致，以代码为准。
-2. **只被动抓 URL 是不够的。** `decode_key` 不出现在任何网络请求里，只出现在
-   `WeixinJSBridge` 的 JSAPI 响应中，所以参考实现要注入脚本去 hook 它。拿到 URL 却没有
-   `decode_key`，下载到的文件前 128 KiB 是密文，播不了。
-3. **`decode_key` 全程当字符串传。** 它是 64 位整数，wasm 侧签名是 `std::string`；一旦
-   被当成 JS number 解析就会丢精度，keystream 完全不同而且不会报错。实测
-   `13835058055282163712` 与其 number 化后的 `13835058055282164000` 生成的 keystream
-   毫无关系。
+1. **decoder 不是「解析真实下载地址」，而是解密已下载文件的头部。** 下载地址本身不需要解析，它就是 JSAPI 响应里的 `url + url_token`；`decrypt.js` 只负责用 `decode_key` 生成 keystream。项目介绍讨论里「再经过 decoder 来解析出真实的下载地址」这句话与参考实现的代码不一致，以代码为准。
+2. **只被动抓 URL 是不够的。** `decode_key` 不出现在任何网络请求里，只出现在 `WeixinJSBridge` 的 JSAPI 响应中，所以参考实现要注入脚本去 hook 它。拿到 URL 却没有 `decode_key`，下载到的文件前 128 KiB 是密文，播不了。
+3. **`decode_key` 全程当字符串传。** 它是 64 位整数，wasm 侧签名是 `std::string`；一旦被当成 JS number 解析就会丢精度，keystream 完全不同而且不会报错。实测 `13835058055282163712` 与其 number 化后的 `13835058055282164000` 生成的 keystream 毫无关系。
 
 ## 技术栈
 
-- **Python**：MITM 代理（注入 + 抓取 `decode_key`）、keystream、直连下载、XOR 解密、
-  以及提供管理与下载面板的 web server。运行时**零第三方依赖**（代理那一半用可选的
-  `mitmproxy`，下载走标准库 `urllib`）
+- **Python**：MITM 代理（注入 + 抓取 `decode_key`）、keystream、直连下载、XOR 解密、以及提供管理与下载面板的 web server。运行时**零第三方依赖**（代理那一半用可选的 `mitmproxy`，下载走标准库 `urllib`）
 - **JavaScript**：注入到视频号页面里的 hook 脚本 `web/inject.js`
-- **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走
-  Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见
-  `docs/项目背景.md`
+- **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走 Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见 `docs/项目背景.md`
 
-**keystream 不再需要 Node。** 参考实现把它交给 `decrypt.js`（5.2 MB 的 Emscripten 产物，
-wasm 以 base64 内嵌，导出 `getDecryptionArray(seedString)`）；M1 把它认出来是标准
-ISAAC64，用 `decode_key` 作种子填进结果数组第 0 槽，每个 64 位字按**大端**吐出 131072
-字节。`wxclip/keystream.py` 就是这个算法的 Python 实现，和 `decrypt.js` 的输出**逐字节
-一致**——`evals/README.md` 的黄金样本表由 `decrypt.js` 生成，`tests/test_keystream.py`
-每次都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。
+**keystream 不再需要 Node。** 参考实现把它交给 `decrypt.js`（5.2 MB 的 Emscripten 产物，wasm 以 base64 内嵌，导出 `getDecryptionArray(seedString)`）；M1 把它认出来是标准 ISAAC64，用 `decode_key` 作种子填进结果数组第 0 槽，每个 64 位字按**大端**吐出 131072 字节。`wxclip/keystream.py` 就是这个算法的 Python 实现，和 `decrypt.js` 的输出**逐字节一致**——`evals/README.md` 的黄金样本表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。
 
 ## 快速开始
 
@@ -100,42 +81,28 @@ wxclip download <url> --key <decode_key>     # 手工给地址和 key
 wxclip decrypt <file> --key <decode_key>     # 只对已下载的密文重跑解密
 ```
 
-下载是流式的、带进度、可断点续传：中断会留下 `.part`，再跑一次接着下（`.part` 里存的已经是
-解密后的字节，续传时 keystream 会从该偏移接上）。`file_size` 实测跨度 3.8 MB – 585 MB，
-所以任何时候都不会把整个文件读进内存。
+下载是流式的、带进度、可断点续传：中断会留下 `.part`，再跑一次接着下（`.part` 里存的已经是解密后的字节，续传时 keystream 会从该偏移接上）。`file_size` 实测跨度 3.8 MB – 585 MB，所以任何时候都不会把整个文件读进内存。
 
 ### 面板（浏览器里挑）
 
-一次 capture 会带回整屏 feed（实测 8 条），命令行里只能靠 `--index` 猜编号；面板就是为这件事
-来的 —— 一眼看完再点哪条：
+一次 capture 会带回整屏 feed（实测 8 条），命令行里只能靠 `--index` 猜编号；面板就是为这件事来的 —— 一眼看完再点哪条：
 
 ```bash
 .venv/bin/python -m wxclip serve            # 默认 http://127.0.0.1:8080
 .venv/bin/python -m wxclip serve --port 9000 --dir ./downloads
 ```
 
-它和 `wxclip proxy` 是两个进程：面板只探一下代理端口通不通，并把该跑的命令显示出来。典型用法
-是两个终端，一个跑 `wxclip proxy`，一个跑 `wxclip serve`，然后在 WeChat 里播视频、在浏览器里
-点下载。面板每次请求都重读 `captures/`，所以不用重启它。
+它和 `wxclip proxy` 是两个进程：面板只探一下代理端口通不通，并把该跑的命令显示出来。典型用法是两个终端，一个跑 `wxclip proxy`，一个跑 `wxclip serve`，然后在 WeChat 里播视频、在浏览器里点下载。面板每次请求都重读 `captures/`，所以不用重启它。
 
-面板上有：代理状态、捕获列表（说明、大小、`decode_key`、是否已下载）、下载进度、以及下载目录里
-的文件（可以直接播或另存为；`/files/` 支持 Range，所以拖进度条也没问题）。
+面板上有：代理状态、捕获列表（说明、大小、`decode_key`、是否已下载）、下载进度、以及下载目录里的文件（可以直接播或另存为；`/files/` 支持 Range，所以拖进度条也没问题）。
 
-**面板不接受 URL**，只接受它刚展示过的那条记录的裸 `url`，不在抓取记录里的一概拒绝 —— 否则浏览器
-里的任意页面都能驱使这个进程去抓任意地址并写进下载目录。同理，`decode_key` 出去是 JSON 字符串，
-页面只把它当文本显示：裸数字一经 `JSON.parse` 就会静默丢精度。
+**面板不接受 URL**，只接受它刚展示过的那条记录的裸 `url`，不在抓取记录里的一概拒绝 —— 否则浏览器里的任意页面都能驱使这个进程去抓任意地址并写进下载目录。同理，`decode_key` 出去是 JSON 字符串，页面只把它当文本显示：裸数字一经 `JSON.parse` 就会静默丢精度。
 
-下载用的仍然是 `wxclip download` 那套代码、同一套文件命名，所以面板和 CLI 看到的是同一批文件：
-已经下过的那条会标上「已下载」、按钮变成「重新下载」—— 明确点它才会再抓一遍。文件是在上一次轮询
-之后才出现的话（比如 CLI 那边刚下完），服务端会直接回「已存在」，不会重抓 585 MB。
+下载用的仍然是 `wxclip download` 那套代码、同一套文件命名，所以面板和 CLI 看到的是同一批文件：已经下过的那条会标上「已下载」、按钮变成「重新下载」—— 明确点它才会再抓一遍。文件是在上一次轮询之后才出现的话（比如 CLI 那边刚下完），服务端会直接回「已存在」，不会重抓 585 MB。
 
-代理运行时的产物都在 `captures/`（git 忽略）：`traffic-*.jsonl` 每条 flow 的摘要、
-`captures-*.jsonl` 注入脚本回传的事件（含 `decode_key`）、`pages/*.html` 注入前的原始页面、
-`flows-*.mitm` 完整 flow 存档（`mitmproxy -r` 回看）。
+代理运行时的产物都在 `captures/`（git 忽略）：`traffic-*.jsonl` 每条 flow 的摘要、`captures-*.jsonl` 注入脚本回传的事件（含 `decode_key`）、`pages/*.html` 注入前的原始页面、`flows-*.mitm` 完整 flow 存档（`mitmproxy -r` 回看）。
 
-同源的 `/__wxclip/*` 比参考实现的 `res.wx.qq.com` + 哨兵域名 `aaaa.com` 少一层 CSP 与跨域
-风险，代价是页面必须是 HTML 响应。M0 已经确认 Linux 客户端走的就是
-`channels.weixin.qq.com` 的 H5 页面，注入路线成立。
+同源的 `/__wxclip/*` 比参考实现的 `res.wx.qq.com` + 哨兵域名 `aaaa.com` 少一层 CSP 与跨域风险，代价是页面必须是 HTML 响应。M0 已经确认 Linux 客户端走的就是 `channels.weixin.qq.com` 的 H5 页面，注入路线成立。
 
 ## 视频后处理：截屏 / 文字 / 总结
 
@@ -165,14 +132,9 @@ wxclip summarize <视频|目录>           # 只总结
 wxclip summarize <目录> --dry-run      # 把请求体打出来看，不发请求
 ```
 
-**截屏**用 ffmpeg 的场景检测（`select=gt(scene,0.2)`）挑关键帧，检测出的变化太少就退回
-按时长均匀取，所以再平的片子也有截屏。检测只解一遍码，取帧靠 `-ss` 关键帧跳转。
+**截屏**用 ffmpeg 的场景检测（`select=gt(scene,0.2)`）挑关键帧，检测出的变化太少就退回按时长均匀取，所以再平的片子也有截屏。检测只解一遍码，取帧靠 `-ss` 关键帧跳转。
 
-**文字提取先走 OCR 这条路**：视频号下载下来没有字幕流（字幕是烧进画面的），而实测样本
-本身就是一张文字卡片 —— 内容全在画面上，没有旁白。截屏已经有了，OCR 只是每张多调一次
-`tesseract`，不下模型、不加 Python 依赖。同一张卡片跨帧重复的行会按相似度合并，但**数字
-不同就不算重复**（宁可留一条近似重复，也不能把金额、版本号删掉）。语音转写是记在册上的
-下一条路，`text.json` 里的 `source` 字段就是留给它区分的。
+**文字提取先走 OCR 这条路**：视频号下载下来没有字幕流（字幕是烧进画面的），而实测样本本身就是一张文字卡片 —— 内容全在画面上，没有旁白。截屏已经有了，OCR 只是每张多调一次 `tesseract`，不下模型、不加 Python 依赖。同一张卡片跨帧重复的行会按相似度合并，但**数字不同就不算重复**（宁可留一条近似重复，也不能把金额、版本号删掉）。语音转写是记在册上的下一条路，`text.json` 里的 `source` 字段就是留给它区分的。
 
 ```bash
 # 缺中文语言包时 extract --check 会把两种装法都告诉你
@@ -180,15 +142,9 @@ sudo pacman -S tesseract-data-chi_sim tesseract-data-eng     # Arch
 wxclip extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的那条路
 ```
 
-**总结**把文字和几张截屏（跨全片均匀取，不是取前几张）一起发给 Messages API。截屏在这里
-不是装饰：OCR 把「折叠屏」读成「折玛屏」「折私屏」，模型对着图才知道该改成什么。prompt 在
-`wxclip/summarize.py` 的 `SYSTEM_PROMPT`，固定样本和评判标准在 `evals/summarize/`。
-凭据从环境变量或 `.env` 读 `ANTHROPIC_API_KEY`（或 `ANTHROPIC_AUTH_TOKEN`）。
+**总结**把文字和几张截屏（跨全片均匀取，不是取前几张）一起发给 Messages API。截屏在这里不是装饰：OCR 把「折叠屏」读成「折玛屏」「折私屏」，模型对着图才知道该改成什么。prompt 在 `wxclip/summarize.py` 的 `SYSTEM_PROMPT`，固定样本和评判标准在 `evals/summarize/`。凭据从环境变量或 `.env` 读 `ANTHROPIC_API_KEY`（或 `ANTHROPIC_AUTH_TOKEN`）。
 
-这一步**没有引入 Python 依赖**：anthropic SDK 装不进同一个 venv（它要 httpx2 →
-httpcore2 → h11>=0.16，mitmproxy 把 h11 钉在更低的版本），真装了就会变成
-「能总结的环境跑不了 capture」。所以请求用标准库 `urllib` 发，理由写在
-`wxclip/summarize.py` 的模块注释里。
+这一步**没有引入 Python 依赖**：anthropic SDK 装不进同一个 venv（它要 httpx2 → httpcore2 → h11>=0.16，mitmproxy 把 h11 钉在更低的版本），真装了就会变成「能总结的环境跑不了 capture」。所以请求用标准库 `urllib` 发，理由写在 `wxclip/summarize.py` 的模块注释里。
 
 ## 目录
 
@@ -206,16 +162,11 @@ httpcore2 → h11>=0.16，mitmproxy 把 h11 钉在更低的版本），真装了
 
 ## 参考
 
-- 参考实现：https://github.com/harrysun2006/WeChatVideoDownloader
-  （上游 lecepin/WeChatVideoDownloader，v2.x 起支持加密视频）
-- keystream 模块（本项目已移植进 Python，这里留作黄金样本的来源）：
-  [`electron/decrypt.js`](https://github.com/harrysun2006/WeChatVideoDownloader/blob/master/electron/decrypt.js)
+- 参考实现：https://github.com/harrysun2006/WeChatVideoDownloader（上游 lecepin/WeChatVideoDownloader，v2.x 起支持加密视频）
+- keystream 模块（本项目已移植进 Python，这里留作黄金样本的来源）：[`electron/decrypt.js`](https://github.com/harrysun2006/WeChatVideoDownloader/blob/master/electron/decrypt.js)
 - 项目介绍讨论：https://github.com/amyteq/at_wxclip/discussions/2
-- 开发计划 issue：M0 https://github.com/amyteq/at_wxclip/issues/4 、
-  M1 https://github.com/amyteq/at_wxclip/issues/8 、
-  M3 https://github.com/amyteq/at_wxclip/issues/10
+- 开发计划 issue：M0 https://github.com/amyteq/at_wxclip/issues/4 、M1 https://github.com/amyteq/at_wxclip/issues/8 、M3 https://github.com/amyteq/at_wxclip/issues/10
 
 ## 说明
 
-仅用于下载本人 WeChat 客户端中已可正常播放的内容，供个人使用。不做付费/受限内容的
-DRM 破解，不做他人账号的批量抓取，不再分发抓取到的媒体文件。
+仅用于下载本人 WeChat 客户端中已可正常播放的内容，供个人使用。不做付费/受限内容的 DRM 破解，不做他人账号的批量抓取，不再分发抓取到的媒体文件。
