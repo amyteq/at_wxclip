@@ -1,0 +1,45 @@
+# Source of truth for this repository's workflow labels.
+#
+# Two pairs of gates, both read by the `at-refine-issue` skill and by anyone
+# triaging by hand:
+#
+#   decision:*  — has a human settled the open questions on this issue?
+#   ai:*        — may an agent act on it, and is one acting right now?
+#
+# `ai:ready` requires all of: the issue is open, it carries numbered acceptance
+# criteria, an owner/reviewer is named, `decision:confirmed` is present where a
+# decision is involved, and `ai:blocked` is absent. The rule is restated in
+# AGENTS.md, which is the single source of truth for shared agent instructions.
+#
+# `ai:ready` is not a dispatch. An agent picks the issue up only when a human
+# sends it a launch prompt.
+#
+# GitHub's own default labels (bug, enhancement, documentation, question, ...)
+# are left in place and are not listed here.
+#
+# This file is applied by hand -- there is no sync workflow, on purpose:
+#
+#   gh label create <name> --color <color> --description <description>
+#   gh label edit   <name> --color <color> --description <description>
+#   gh label list --json name,color,description     # compare against this file
+#
+# Schema: list of {name, color (hex without #), description}.
+
+# --- decision:* — has a human decided? ---------------------------------
+- name: decision:needed
+  color: b60205
+  description: A human decision is required before implementation can start.
+- name: decision:confirmed
+  color: 0e8a16
+  description: The decision is recorded in the issue; implementation may proceed.
+
+# --- ai:* — agent state ------------------------------------------------
+- name: ai:ready
+  color: 0e8a16
+  description: Acceptance criteria are clear and decisions confirmed; an agent may be dispatched.
+- name: ai:blocked
+  color: e11d21
+  description: An agent must not work on this — missing decision, unclear AC, or unsafe scope.
+- name: ai:implementing
+  color: 5319e7
+  description: An agent has been dispatched and is implementing this issue.
