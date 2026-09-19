@@ -53,7 +53,7 @@ Name the checks that must run and what counts as passing. `make lint test` is th
 ## Context, dependencies, and evidence
 
 - [Linked issue / discussion / spec](url): what it settles for this work.
-- Repository instructions the implementer must follow, and the plan entry in `docs/开发计划.md` this issue belongs to.
+- Repository instructions the implementer must follow, and the plan entry in `docs/development-plan.md` this issue belongs to.
 - Dependencies, with whether each one blocks or merely informs.
 
 ## Owner 与 reviewer

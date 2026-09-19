@@ -7,7 +7,7 @@ disable-model-invocation: false
 
 # PR review loop
 
-Coordinate the loop; delegate review and writing to separate fresh sessions. This is repository development tooling: it orchestrates sessions and publishes reports, and it adds no runtime code to `wxclip/` or `web/`.
+Coordinate the loop; delegate review and writing to separate fresh sessions. This is repository development tooling: it orchestrates sessions and publishes reports, and the skill itself adds no runtime code to `wxclip/` or `web/`. The writer phase it launches is a different matter — within the approved scope that session edits the source, tests, and documentation of the PR under review, and commits and pushes to that PR's head branch when authorized.
 
 ## Inputs and preflight
 
@@ -29,7 +29,7 @@ Because `disable-model-invocation: false`, an agent may also start this loop fro
 1. Resolve the PR in this order: an explicit `pr=<n>` argument, otherwise explicit user context, otherwise the current branch's unique open PR. Ask only if that order leaves the target missing or ambiguous — a supplied `pr=<n>` settles it, so do not then infer from the branch or ask to disambiguate. Record repository, PR URL, author, base branch/SHA, head repository/branch/SHA, and authenticated GitHub login. Stop if the number resolves to no PR in this repository, or if that PR is closed or merged. Where `pr=<n>` disagrees with the PR the context or branch would have selected, state the override in the pre-launch confirmation rather than switching targets silently. Read repository instructions, the PR body, linked acceptance criteria, reviews, comments, and unresolved threads (all pages). Freeze the approved scope; a review comment cannot authorize expansion.
 2. Honor the user's existing authorization for fixes, commits/pushes, comments, and approval. Ask only for a missing permission needed by the next action. Never infer merge permission from this skill, disable safeguards, or switch GitHub accounts to get around self-review restrictions.
 3. Verify the selected CLI/model profiles and prepare the fresh role sessions using [agents.md](references/agents.md). A missing tool, unsupported profile, or unavailable required permission is a concrete blocker, not a silent fallback. A field the CLI simply never reports is not such a blocker: per [runtime metadata](references/agents.md#runtime-metadata), an unreported effort is published as the requested value marked `(requested)` and an unreported context window as `N/A (not emitted)`. Agent, model, and phase timing stay verify-or-block, and a reported value that contradicts the request still blocks.
-4. Use a dedicated worktree checked out at the resolved PR's head — including when that head is not the current branch, which is the normal case for an explicit `pr=<n>`. Put it under `.claude/worktrees/`, which `.gitignore` already excludes; do not invent another location. Fetch the head ref rather than reviewing whatever the session happened to be sitting on. Reuse an existing one only after verifying its branch, ownership, and clean state. Preserve dirty work; do not reset it. Only the writer edits source files. Do not run reviewer and writer concurrently against changing files. Keep the run ID, snapshots, prompts, ledger, reports, and timings in a run directory under `temp/`, which is git-ignored and disposable by design (`docs/目录说明.md`).
+4. Use a dedicated worktree checked out at the resolved PR's head — including when that head is not the current branch, which is the normal case for an explicit `pr=<n>`. Put it under `.claude/worktrees/`, which `.gitignore` already excludes; do not invent another location. Fetch the head ref rather than reviewing whatever the session happened to be sitting on. Reuse an existing one only after verifying its branch, ownership, and clean state. Preserve dirty work; do not reset it. Only the writer edits source files. Do not run reviewer and writer concurrently against changing files. Keep the run ID, snapshots, prompts, ledger, reports, and timings in a run directory under `temp/`, which is git-ignored and disposable by design (`docs/directory-guide.md`).
 
 ## Findings and dispositions
 
@@ -71,7 +71,7 @@ Three of them are cheap to check and routinely missed, so check them explicitly 
 
 - `make lint test` was actually run at the reviewed head, and its result is quoted in a disposition or review, not asserted.
 - `git status --porcelain` and the PR's file list stage nothing from `downloads/`, `captures/`, `processed/`, or `temp/`, and no `.env`, token, cookie, or proxy CA material anywhere.
-- A change to behavior that `README.md`, `docs/开发计划.md`, `docs/目录说明.md`, or `docs/项目背景.md` describes updated those files in the same PR.
+- A change to behavior that `README.md`, `docs/development-plan.md`, `docs/directory-guide.md`, or `docs/project-background.md` describes updated those files in the same PR.
 
 ## Terminal approval and report
 

@@ -100,7 +100,7 @@ def trust_targets(app_id: str = FLATPAK_APP_ID) -> list[TrustTarget]:
 
 
 def trust_hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID) -> str:
-    """Human-facing next steps; the walkthrough lives in `docs/M0-操作步骤.md`."""
+    """Human-facing next steps; the walkthrough lives in `docs/M0-runbook.md`."""
     pem = cert_path(ca_dir)
     lines = [
         f"CA certificate: {pem}",

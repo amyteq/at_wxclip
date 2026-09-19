@@ -5,7 +5,7 @@
 # Why this exists: WeChat's in-app proxy setting only covers its main process. The
 # Channels page runs in a separate Chromium-based process (RadiumWMPF/WeChatAppEx) that
 # gets neither `--proxy-server` nor any proxy env var, so it connects directly and the
-# proxy never sees the page (observed 2026-09-11, see docs/M0-操作步骤.md). Chromium falls
+# proxy never sees the page (observed 2026-09-11, see docs/M0-runbook.md). Chromium falls
 # back to http_proxy/https_proxy/all_proxy when it has no other proxy configuration, and
 # a Flatpak app inherits the env vars given to `flatpak run`.
 #

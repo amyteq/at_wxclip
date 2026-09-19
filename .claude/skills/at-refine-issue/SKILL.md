@@ -22,7 +22,7 @@ Usage: `/at-refine-issue <issue-url|number> [refinement instructions]`. Parse th
 
 Resolve the target before any remote mutation:
 
-1. A full URL wins over the current repository; if its `owner/repo` differs, use the URL's repository and say so in the final report. A pull-request URL, a discussion URL, or another repository's bare number is not a valid target — stop and ask.
+1. A full URL wins over the current repository; if its `owner/repo` differs, use the URL's repository, say so in the final report, and refine against *that* repository's conventions — its own agent instructions, plan of record, label set, and language rule. Where the resolved repository has no equivalent of something named below, report the gap or ask; never import this repository's conventions into another repository's issue. A pull-request URL, a discussion URL, or another repository's bare number is not a valid target — stop and ask.
 2. An omitted target is allowed only when the conversation has already selected exactly one issue explicitly and unambiguously. Two candidates, an implied "the issue we discussed", or a bare number with no current repository means ask. Do not guess.
 3. Verify the target in the resolved repository. `gh issue view --json` exposes no lock state — its `JSON FIELDS` list (gh 2.100.0) has no `locked` — so read lock and kind from the REST object:
 
@@ -59,7 +59,7 @@ Read, in this order, and record what each source settles:
 1. The issue: body, labels, assignees, milestone, state.
 2. Every comment, all pages: `gh api repos/<owner>/<repo>/issues/<n>/comments --paginate --jq '.[] | {id, user: .user.login, created_at, updated_at, html_url}'`, then the bodies that matter. Later confirmed decisions supersede earlier drafts on the same point; say which comment settled it.
 3. Everything the issue links — sibling issues, discussion decisions, specs, PRs — far enough to know what is already decided.
-4. Repository instructions: [`AGENTS.md`](../../../AGENTS.md) (the single source of truth for shared agent conventions), `CLAUDE.md`, [`.github/labels.yml`](../../../.github/labels.yml), `docs/开发计划.md` (the plan of record — refine against it rather than restating it), and `docs/目录说明.md` for where a new artifact belongs.
+4. Repository instructions. In this repository: [`AGENTS.md`](../../../AGENTS.md) (the single source of truth for shared agent conventions), `CLAUDE.md`, [`.github/labels.yml`](../../../.github/labels.yml), `docs/development-plan.md` (the plan of record — refine against it rather than restating it), and `docs/directory-guide.md` for where a new artifact belongs. For a target resolved to another repository, read that repository's equivalents instead of these paths.
 
 Classify every input as **confirmed decision**, **assumption**, **recommendation**, **dependency**, or **unresolved decision**, and keep that classification visible in the output. Never promote an assumption to a confirmed decision, invent an owner, priority, budget, deadline, or approval, or let a recommendation read as a requirement.
 
@@ -82,7 +82,7 @@ Do not expand scope. Work that the evidence suggests but the human never asked f
 
 ### Language
 
-This repository writes human-facing prose in Simplified Chinese and everything machine-shaped in English (`AGENTS.md`, Engineering). For a refined issue that splits as follows:
+This repository writes human-facing prose in Simplified Chinese and everything machine-shaped in English (`AGENTS.md`, Engineering). The split below is this repository's; for a target resolved to another repository, follow that repository's own language convention and say in the report which one you applied. For a refined issue in this repository that splits as follows:
 
 - **Chinese:** the narrative sections — goal, background, scope, non-goals, trade-offs, context and dependencies. They are for the humans deciding whether the work is right.
 - **English:** the acceptance-criteria checklist and the validation-and-evidence table, in the issue body and in the task comment alike. They are a test specification, and the two copies must be byte-identical — one list published twice. A Chinese body with an English comment breaks that invariant outright, because "same list" then stops being checkable.
@@ -118,7 +118,7 @@ The comment comes first because the issue body has to link it. If step 2 fails a
 
 ## Readiness, not dispatch
 
-The promotion rules are written down in two places that must agree: the Engineering section of [`AGENTS.md`](../../../AGENTS.md) and the header comment of [`.github/labels.yml`](../../../.github/labels.yml). `ai:ready` requires all of: the issue is open, it carries numbered acceptance criteria, an owner/reviewer is named, `decision:confirmed` is present where a decision is involved, and `ai:blocked` is absent.
+In this repository the promotion rules are written down in two places that must agree: the Engineering section of [`AGENTS.md`](../../../AGENTS.md) and the header comment of [`.github/labels.yml`](../../../.github/labels.yml). `ai:ready` requires all of: the issue is open, it carries numbered acceptance criteria, an owner/reviewer is named, `decision:confirmed` is present where a decision is involved, and `ai:blocked` is absent. A target resolved to another repository uses that repository's own label scheme; where it has no equivalent, report that rather than applying these names to it.
 
 - Use existing labels only. A needed-but-missing label is reported, not created.
 - Preserve unrelated labels, assignees, milestone, and title unless the request changes them.
@@ -174,12 +174,23 @@ Undispatched requires all three of:
 
 1. The invoking human says in this session that the task was never dispatched, or asks for the draft to be replaced.
 2. The comment body carries no `--- dispatched <YYYY-MM-DD> ---` record, and its status sentence still says it is prepared but not dispatched.
-3. Nothing on the issue after that comment reads as a run in flight — no later comment claiming or reporting the task, and no assignee, `ai:implementing` label, or linked pull request added since:
+3. Nothing on the issue after that comment reads as a run in flight — no later comment claiming or reporting the task, and no assignee, `ai:implementing` label, or linked pull request added since. Read the later comments *with their bodies*: whether one claims or reports the task is a judgement about what it says, which an author-and-URL projection cannot answer.
 
    ```bash
-   gh issue view <n> --repo <owner>/<repo> --json comments,assignees,labels,closedByPullRequestsReferences \
-     --jq '{later: [.comments[] | select(.createdAt > "<task comment createdAt>") | {author: .author.login, url}], assignees: [.assignees[].login], labels: [.labels[].name], linked_prs: (.closedByPullRequestsReferences // [])}'
+   gh issue view <n> --repo <owner>/<repo> --json comments,closedByPullRequestsReferences \
+     --jq '{later: [.comments[] | select(.createdAt > "<task comment createdAt>") | {author: .author.login, url, body}], linked_prs: (.closedByPullRequestsReferences // [])}'
    ```
+
+   That call settles the comments and the linked PRs, but not "added since": `--json assignees,labels` reports only the *current* assignees and labels and carries no timestamps, so it cannot distinguish a label applied an hour ago from one applied last month. Take that from the timeline, which timestamps every event:
+
+   ```bash
+   gh api repos/<owner>/<repo>/issues/<n>/timeline --paginate \
+     --jq '.[] | select(.created_at > "<task comment createdAt>")
+           | select(.event == "labeled" or .event == "assigned" or .event == "cross-referenced")
+           | {event, created_at, label: .label.name?, assignee: .assignee.login?}'
+   ```
+
+   Any signal this run cannot timestamp is not evidence that the task is undispatched. It falls back to the fail-closed default above, exactly as "could not check" does.
 
 The comment itself is the durable record, because it is the one artifact the dispatching human and every later run both see. When a run learns a dispatch happened — the human says so, or the evidence above shows it — its first write appends that record, which keeps the byte prefix intact and is therefore legal on a dispatched task:
 
@@ -207,7 +218,7 @@ The append-versus-rewrite distinction is enforceable with a byte-prefix test, wh
 
 Superseding a revision means both directions stay navigable: the new comment links the one it replaces, the superseded comment gains a line pointing forward, and the issue's Execution section names exactly one current revision. A reader must never have to guess which task is live.
 
-Keep snapshots (`url`, `comment_id`, `author`, `updated_at`, `sha256`, and the verbatim body) in a run directory under `temp/`, which is git-ignored and disposable by design (`docs/目录说明.md`). Nothing from this skill is ever staged: the durable record is what you publish on the issue, not a file in the tree.
+Keep snapshots (`url`, `comment_id`, `author`, `updated_at`, `sha256`, and the verbatim body) in a run directory under `temp/`, which is git-ignored and disposable by design (`docs/directory-guide.md`). Nothing from this skill is ever staged: the durable record is what you publish on the issue, not a file in the tree.
 
 ## Verify and report
 

@@ -85,7 +85,7 @@
 
 ## 待确认的前提
 
-以下几点会直接影响设计，动手前先确认（M0 spike 的内容，操作步骤见 `docs/M0-操作步骤.md`）：
+以下几点会直接影响设计，动手前先确认（M0 spike 的内容，操作步骤见 `docs/M0-runbook.md`）：
 
 1. ~~**Linux 版 WeChat 能不能被 MITM**~~ —— **分两半，已确认**（2026-09-11）。**主进程可以**：应用内代理设置生效，CA 装进 Flatpak 沙箱的 NSS 库后客户端接受本地证书，HTTPS 被解出明文。**webview 不行 —— 靠装 CA 永远不行**，它的根证书编译在二进制里（见上一节），只能用 `--ignore-certificate-errors-spki-list` 放行我们的公钥。
 2. ~~**Linux 客户端的视频号是不是同一条 H5 路径**~~ —— **已确认是**，而且 URL 与参考实现一致：webview 打开过 `https://channels.weixin.qq.com/web/pages/feed?oid=…&nid=…&context_id=…&entrance_id=1002&exportkey=…`，标题「视频号」，并落了 `channels.weixin.qq.com` 的 cookie。证据是 WeChat 自己的 Chromium profile：`~/.var/app/com.tencent.WeChat/.xwechat/radium/web/profiles/multitab_<hash>/{History,Cookies}`。**这意味着注入路线在 Linux 上成立，项目性质不变（M）。**

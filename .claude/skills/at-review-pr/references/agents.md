@@ -11,7 +11,7 @@ Use independent CLI invocations for each review and writer phase. A prompt that 
 
 `opus[1m]` is acceptable only after verifying it resolves to Opus 5 with 1M context. Prefer the pinned full name to avoid alias drift. Check `codex --version`, `codex exec --help`, `claude --version`, and `claude --help` on the actual host, then check the resolved profile against the fields in [Runtime metadata](#runtime-metadata). Pass effort with the documented CLI flag only; do not rely on an environment variable to carry it and do not change global configuration.
 
-These forms were checked against Codex CLI 0.154.0 and Claude Code 2.1.273, which are the versions installed on this host; recheck help on other installations. Sources for configuration details: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference), [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol), and [Claude model configuration](https://code.claude.com/docs/en/model-config).
+These forms were verified against Codex CLI 0.154.0 and Claude Code 2.1.273 and 2.1.277 — the versions observed on the dates those checks were recorded in [the validation record](../../../../docs/test/at-review-pr.md), not a claim about what is installed now. CLIs upgrade underneath a pinned document, so rerun `codex exec --help` and `claude --help` on any other installation and after any upgrade, and conclude from that output rather than from this line. Sources for configuration details: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference), [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol), and [Claude model configuration](https://code.claude.com/docs/en/model-config).
 
 ## Runtime metadata
 
@@ -19,7 +19,7 @@ Record both the requested settings and what the session actually reported. CLI a
 
 Each provider reports on a different stream, so read each field from the stream named in its column: Codex from the stderr header in `phase_meta`, Claude from the `--output-format json` result object on stdout in `phase_output`.
 
-| Field | `codex exec` (0.154.0) — `phase_meta` | `claude -p` (Claude Code 2.1.273) — `phase_output` |
+| Field | `codex exec` (0.154.0) — `phase_meta` | `claude -p` (Claude Code 2.1.273 / 2.1.277) — `phase_output` |
 |---|---|---|
 | model | stderr header `model:` | `modelUsage` key and `.canonicalModel`; `init.model` under `stream-json` |
 | effort | stderr header `reasoning effort:` | not reported anywhere — publish the requested value as `(requested)` |
@@ -36,7 +36,7 @@ An effort the CLI never reports is published as `xhigh (requested)` and does not
 
 ## Handoff packet (both roles)
 
-Provide the role, run ID, round/phase, absolute worktree and `temp/` run-directory paths, PR URL/repository, base/head SHAs, approved scope/AC, allowed side effects, requested profile, and report format from [reports.md](reports.md). Include the relevant repository instructions and these skill rules explicitly. Delegate only this phase; prohibit recursive loop orchestration and new subagents. Require each phase to name, in its validation line, only tools and commands it actually ran: a fabricated harness or wrapper name there is a defect in the report, and the coordinator rejects the phase output rather than publishing it. Before rejecting on those grounds, verify that the tool is actually absent — run `command -v <name>` and try its help. Host tooling does not appear in the repository tree, so an unfamiliar name is not evidence of invention and "this repo does not use it" is not "it does not exist"; rejecting a truthful report is the worse error, and [the validation record](../../../../docs/测试/at-review-pr.md) documents this failure mode.
+Provide the role, run ID, round/phase, absolute worktree and `temp/` run-directory paths, PR URL/repository, base/head SHAs, approved scope/AC, allowed side effects, requested profile, and report format from [reports.md](reports.md). Include the relevant repository instructions and these skill rules explicitly. Delegate only this phase; prohibit recursive loop orchestration and new subagents. Require each phase to name, in its validation line, only tools and commands it actually ran: a fabricated harness or wrapper name there is a defect in the report, and the coordinator rejects the phase output rather than publishing it. Before rejecting on those grounds, verify that the tool is actually absent — run `command -v <name>` and try its help. Host tooling does not appear in the repository tree, so an unfamiliar name is not evidence of invention and "this repo does not use it" is not "it does not exist"; rejecting a truthful report is the worse error, and [the validation record](../../../../docs/test/at-review-pr.md) documents this failure mode.
 
 ### Repository invariants the packet must carry
 
@@ -54,7 +54,7 @@ Writer packet: current reviewer report plus ledger, per-finding evidence, permit
 
 ## Worktree and scratch
 
-Both roles work in a git worktree under `.claude/worktrees/`, which `.gitignore` already excludes — do not create another worktree root. Every run artifact (prompts, `phase_output`, `phase_meta`, ledger, snapshots, timings) lives in one run directory under `temp/`, which is git-ignored and documented as disposable in `docs/目录说明.md`. Nothing from either path is ever staged.
+Both roles work in a git worktree under `.claude/worktrees/`, which `.gitignore` already excludes — do not create another worktree root. Every run artifact (prompts, `phase_output`, `phase_meta`, ledger, snapshots, timings) lives in one run directory under `temp/`, which is git-ignored and documented as disposable in `docs/directory-guide.md`. Nothing from either path is ever staged.
 
 ## Launch forms
 

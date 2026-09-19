@@ -25,7 +25,7 @@ gh api repos/<owner>/<repo>/issues/<n>/comments --paginate \
   --jq '.[] | select(.body | startswith("<!-- at-refine-issue:task repo=<owner>/<repo> issue=<n> ")) | {id, html_url, updated_at, user: .user.login}'
 ```
 
-A hit is a candidate, not a match. Before editing or adopting one, require its first line to be exactly the marker for this repository and issue, and its `user.login` to be the account the run writes as (`gh api user --jq .login`). A marker comment written by anyone else is left untouched and reported: it is evidence, not this run's work, and it never becomes the comment a launch prompt points at.
+A hit is a candidate, not a match. Before editing or adopting one, require all three of: its first line is exactly the marker for this repository and issue; its `user.login` is the account the run writes as (`gh api user --jq .login`); and its body still carries the required sections of the template below, so it is a task comment rather than a quotation of one. A marker comment written by anyone else is left untouched and reported: it is evidence, not this run's work, and it never becomes the comment a launch prompt points at.
 
 ## Template
 
@@ -44,7 +44,7 @@ What must be true when the task is done. Name the deliverable and where it lands
 ### Read first
 
 - `AGENTS.md` — the shared agent agreement, including the definition of done and the boundaries this task may not cross.
-- `docs/开发计划.md` for the milestone this belongs to, and `docs/目录说明.md` for where a new artifact goes.
+- `docs/development-plan.md` for the milestone this belongs to, and `docs/directory-guide.md` for where a new artifact goes.
 - Each linked issue, discussion, or decision, with one clause saying what it settles and what about it is *not* a requirement here.
 - The repository invariants this task could break, named individually rather than by reference: `decode_key` stays an opaque string end to end, a `.part` file holds already-decrypted bytes and resume continues the keystream from that offset, downloading goes direct rather than through the proxy, runtime dependencies stay at zero, and nothing from `downloads/`, `captures/`, `processed/`, or `temp/` is ever staged.
 
@@ -115,7 +115,7 @@ gh api repos/<owner>/<repo>/issues/comments/<id> -X PATCH -F body=@task-comment.
 gh issue edit <n> --repo <owner>/<repo> --body-file issue-body.md               # issue body, after the permalink exists
 ```
 
-Snapshot before every edit — `url`, `comment_id`, `author`, `updated_at`, `sha256`, and the verbatim body — into a run directory under `temp/`, which `.gitignore` excludes and `docs/目录说明.md` describes as disposable. Those files are working state, not the record: the durable record is the published comment itself, and nothing this skill writes locally is ever staged.
+Snapshot before every edit — `url`, `comment_id`, `author`, `updated_at`, `sha256`, and the verbatim body — into a run directory under `temp/`, which `.gitignore` excludes and `docs/directory-guide.md` describes as disposable. Those files are working state, not the record: the durable record is the published comment itself, and nothing this skill writes locally is ever staged.
 
 ## Revising a dispatched task
 
@@ -146,7 +146,7 @@ The heading is signposting for humans; the enforceable part is the byte prefix, 
 
 Anything that fails that test — reordered sections, a corrected earlier sentence, a trimmed scope list — is a rewrite. Rewriting is allowed; it simply costs a stop and an explicit redispatch, which is the right price for changing a task a run has already acted on. Publish the replacement as a new comment at revision `r+1` rather than mutating the old one, then make both directions navigable:
 
-- The new comment opens with `Supersedes [revision <r>](<old permalink>).`
+- The new comment's first line is still the marker, carrying `revision=<r+1>` — a replacement that drops it is unfindable by the query above. Its first line of body text is `Supersedes [revision <r>](<old permalink>).`
 - The old comment gains one appended line: `Superseded by [revision <r+1>](<new permalink>). This revision is no longer current.`
 - The issue's Execution section names exactly one current revision and links it.
 - Tell the human, in the report, that the previous dispatch has ended and the new revision needs an explicit redispatch.
@@ -156,7 +156,7 @@ Anything that fails that test — reordered sections, a corrected earlier senten
 | Situation | Action |
 |---|---|
 | Comment published, issue body update failed | The permalink is already valid. Re-fetch it by marker, reuse it, repair only the issue body. Never post a second comment |
-| Publication timed out, outcome unknown | Query by marker before retrying. Adopt a candidate only if it passes the marker-and-author checks above; if one exists and fails them, stop and report; if none exists, publish once |
+| Publication timed out, outcome unknown | Query by marker before retrying. Adopt a candidate only if it passes all three adoption checks above — marker, author, and required sections; if one exists and fails them, stop and report; if none exists, publish once |
 | A human edited the comment since the snapshot | Reconcile their text into the new body, or stop and report the conflict. Stale text never overwrites a human edit |
 | An undispatched draft comment already exists | Reuse it in place, keeping its revision — an in-place edit never raises `revision`. A draft is not a contract, so a full rewrite is fine; it just stays the same comment and the same permalink. "Undispatched" must be established by the fail-closed rule, never assumed |
 | Two task comments exist by accident | Keep the one the issue links, mark the other superseded, and say so in the report. Do not delete it |

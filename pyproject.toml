@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Capture, decode and download WeChat videos playable in the local WeChat client"
 requires-python = ">=3.11"
 dependencies = []
-# Candidates are still open; see docs/开发计划.md and pin them as each milestone lands.
+# Candidates are still open; see docs/development-plan.md and pin them as each milestone lands.
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]

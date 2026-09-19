@@ -23,7 +23,7 @@ wxclip summarize --text evals/summarize/m0-mac-duo/text.txt --out temp/eval
 | `m0-mac-duo/` | M0 实测片子的真实 OCR 结果（21 行，含误识别） | 能不能从脏文本里还原出正确的一段话 |
 | `no-text/` | 空转写 | 没有信息时会不会编 |
 
-两个样本都只有文字：截图不进 Git（见 `docs/目录说明.md`），要带图跑就用 `wxclip process <视频>` 走完整条路。带图和不带图的差别本身也值得记一笔 —— OCR 把「折叠屏」读成「折玛屏/折私屏/折县」，只有图能纠正它。
+两个样本都只有文字：截图不进 Git（见 `docs/directory-guide.md`），要带图跑就用 `wxclip process <视频>` 走完整条路。带图和不带图的差别本身也值得记一笔 —— OCR 把「折叠屏」读成「折玛屏/折私屏/折县」，只有图能纠正它。
 
 ### m0-mac-duo
 

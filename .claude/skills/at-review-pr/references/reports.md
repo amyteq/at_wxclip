@@ -8,6 +8,8 @@ Write every published comment as **soft-wrapped Markdown**: one paragraph, list 
 
 Leave a blank line before any `---`. Without it the preceding paragraph parses as a setext H2 and renders as a heading, which is how a signature separator silently turns the line above it bold.
 
+That rule binds the header lines of the templates below too, which is why each `Base: …`, `Push: …`, and link line stands as its own paragraph with a blank line after it. Two adjacent lines are one hard-wrapped paragraph in source, which is exactly what the rule forbids; GitHub's comment renderer happens to turn that single newline into a `<br>`, but the rule governs the source, and separate paragraphs render on separate lines under every renderer. Do not close the gap by joining them into one long line either — that loses the line break the reader needs.
+
 ## Reviewer
 
 ```markdown
@@ -15,6 +17,7 @@ Leave a blank line before any `---`. Without it the preceding paragraph parses a
 ## PR review — round R / LIMIT — full|delta|final-full
 
 Base: [BASE_SHA_SHORT](BASE_COMMIT_URL) · Reviewed head: [HEAD_SHA_SHORT](HEAD_COMMIT_URL) · [Scope / AC](SCOPE_URL)
+
 [Previous review](PREVIOUS_REVIEW_URL) · [Writer disposition](DISPOSITION_URL) · Delta range: [PREVIOUS_HEAD_SHORT..HEAD_SHA_SHORT](COMPARE_URL) (full reviews: complete PR diff)
 
 | ID | Priority | Finding / concrete impact | Evidence at reviewed head | Ledger state / adjudication |
@@ -39,6 +42,7 @@ In round 1 write `previous review: none` and `writer disposition: none` as plain
 ## Fix dispositions — round R / LIMIT
 
 Base: [BASE_SHA_SHORT](BASE_COMMIT_URL) · Input head: [REVIEWED_SHA_SHORT](REVIEWED_COMMIT_URL) · Result head: [RESULT_SHA_SHORT](RESULT_COMMIT_URL) · [Review](REVIEW_URL) · [Scope / AC](SCOPE_URL)
+
 Push: verified remote head / no code changes / blocked (reason)
 
 | ID | Disposition | Change or rebuttal/deferral reasoning | Evidence / commit / tests | Residual risk / next action |
