@@ -80,17 +80,22 @@ form 4: bash -n exit=0
 ## 仓库检查（AC8）
 
 ```text
+$ git rev-parse HEAD                  # 这次记录绑定的 commit
+17ecc3a7498d835a1397e5bbbe9c6406d5e916a5
+
 $ make lint test                      # 2026-09-19 复跑
 .venv/bin/python -m ruff check .
 All checks passed!
 .venv/bin/python -m ruff format --check .
 60 files already formatted
 .venv/bin/python -m pytest
-404 passed in 20.65s
+404 passed in 20.75s
 
 $ git diff --check
 (无输出，exit=0)
 ```
+
+一条结果只在它被观察到的那个 commit 上成立，所以这里先记 `git rev-parse HEAD` 再记 `make lint test`：上面这组输出是在 `17ecc3a` 上实际跑出来的，不是从别处抄来的断言。head 一动就要重跑并把 SHA 一起换掉 —— 没有 SHA 的结果没法跟任何 commit 对上，也就不能当证据用。`404 passed` 后面的秒数每次都会有零点几秒的抖动，对不上不算回归，`404 passed` 这个数才是要对的。
 
 `ruff format` 那行数的是 36 个 `.py` 加 24 个 `.md`（这个版本的 ruff 会去格式化 Markdown 里的 Python 代码块），所以它跟着文档数走，不跟着代码走 —— 2026-09-17 首次记录时是 `57`，差的 3 个正是本 PR 新增的 `docs/test/` 三份 Markdown。`temp/` 被 git 忽略，根目录那一跑不扫它。`404 passed` 两次一致。
 
