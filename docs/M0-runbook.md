@@ -15,7 +15,7 @@ M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视�
 - WeChat 是 **Flatpak** 包（`com.tencent.WeChat` 4.0.1.11，runtime `org.freedesktop.Platform 25.08`），沙箱权限只有 `xdg-download:ro`，**看不到宿主机的家目录**，HOME 实际是 `~/.var/app/com.tencent.WeChat/`。
 - 视频号页面跑在 `RadiumWMPF/runtime/WeChatAppEx` 里 —— 进程参数里有 `network.mojom.NetworkService`、`gpu-process`、`--enable-features=...`，是 **Chromium 内核的 webview**。注入路线在 Linux 上有戏就是因为这个。
 - Flatpak 沙箱里的 `/etc/pki` 来自 runtime 自带的证书包（146 张根证书，宿主机的 `/etc/ssl/certs` 在沙箱里根本不存在），**所以宿主机 `update-ca-trust` 装进去的 CA 它看不到**。**主进程**的信任库是沙箱内的 NSS：`~/.var/app/com.tencent.WeChat/.pki/nssdb`。
-- **webview 是个例外，而且没得谈**：`WeChatAppEx` 是 Chromium 122，根证书列表编译在它自己的二进制里，做证书校验的那个进程从来不打开 NSS 数据库。装 CA 对它完全无效，只能给它加 `--ignore-certificate-errors-spki-list`（第 3.4 节）。详细证据在 `docs/项目背景.md`。
+- **webview 是个例外，而且没得谈**：`WeChatAppEx` 是 Chromium 122，根证书列表编译在它自己的二进制里，做证书校验的那个进程从来不打开 NSS 数据库。装 CA 对它完全无效，只能给它加 `--ignore-certificate-errors-spki-list`（第 3.4 节）。详细证据在 `docs/project-background.md`。
 - **光把文件放到那个路径没用。** Flatpak 的家目录只挂载 metadata 里 `persistent=` 列出的子目录（WeChat 是 `.xwechat` 和 `xwechat_files`），`.pki` 不在里面 —— 从沙箱里看 `$HOME/.pki/nssdb` 根本不存在。必须补一条：
 
   ```bash
@@ -93,7 +93,7 @@ scripts/run-wechat-proxied.sh --kill     # 或者让脚本替你 flatpak kill �
 
 ## 3.4 让 webview 接受我们的证书（必须，只有这一条路）
 
-路由通了以后 webview 依然弹「您的连接不是私密连接」，代理侧是 `Client TLS handshake failed … does not trust the proxy's certificate`。**这不是装 CA 能解决的** —— 三处信任库都装上、`--persist=.pki` 也确认沙箱里看得见 `cert9.db`，照样被拒，因为它的根证书编译在二进制里（证据见 `docs/项目背景.md`）。
+路由通了以后 webview 依然弹「您的连接不是私密连接」，代理侧是 `Client TLS handshake failed … does not trust the proxy's certificate`。**这不是装 CA 能解决的** —— 三处信任库都装上、`--persist=.pki` 也确认沙箱里看得见 `cert9.db`，照样被拒，因为它的根证书编译在二进制里（证据见 `docs/project-background.md`）。
 
 出路是给 webview 加 `--ignore-certificate-errors-spki-list=<base64(sha256(SPKI))>` —— 只放行我们这一个公钥，而不是整体关掉证书校验。它的命令行由 `libwmpf_host_export.so` 拼，不读环境变量也不读配置文件，所以我们在 exec 的那一刻把参数插进去：
 
@@ -149,7 +149,7 @@ jq -r 'select(.kind=="flow") | .host' captures/traffic-*.jsonl | sort | uniq -c 
 
 ## 5. 收尾
 
-M0 的结论（无论成立与否）写回 `docs/项目背景.md` 的「待确认的前提」和 `docs/开发计划.md`，并在 issue #4 勾掉对应条目。真实的 JSAPI 响应形态脱敏后放进 `evals/`，特别是：
+M0 的结论（无论成立与否）写回 `docs/project-background.md` 的「待确认的前提」和 `docs/development-plan.md`，并在 issue #4 勾掉对应条目。真实的 JSAPI 响应形态脱敏后放进 `evals/`，特别是：
 
 - Linux 上标记媒体响应的 `err_msg` 字符串；
 - `decode_key` 在 JSON 里是字符串还是裸数字（日志里的 `decode_key_json_type` 直接给答案）；

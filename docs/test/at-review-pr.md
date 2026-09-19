@@ -1,0 +1,102 @@
+# at-review-pr 验证记录
+
+记录日期：2026-09-17 · 分支：`dev/skills-port` · 对应 issue：#16
+
+这份记录是 `at-review-pr` 移植后的离线验证。**全程没有改动任何 GitHub 状态**：没有发评论、没有提交 review、没有加 label。真实 PR 上跑一遍完整循环不在这条 issue 的范围里（那需要一条正在飞的 PR），所以下面分两类：**已执行**的检查给出命令与原始输出，**推演**的场景逐条对照写下来的规则说明会发生什么。
+
+## 环境
+
+下面这张表是**记录当日（2026-09-17）在本机观察到的值**，不是「本机当前装着的版本」。CLI 会自己升级，所以它是一次带日期的观察，不是一条持续成立的断言。
+
+| 项 | 记录当日观察到的值 |
+|---|---|
+| `codex --version` | `codex-cli 0.154.0` |
+| `claude --version` | `2.1.273 (Claude Code)` |
+| `gh --version` | `gh version 2.100.0 (2026-09-04)` |
+| `gh api user --jq .login` | `harrysun2006` |
+
+`references/agents.md` 里声明「已对照验证」的就是上面这两个 CLI 版本，所以下一节的启动形态结论**绑在这两个版本号上，不绑在「本机」上** —— 换一台机器、或者本机 CLI 升级之后，按同样的做法重跑 `codex exec --help` 与 `claude --help` 再下结论。
+
+**2026-09-19 复查：** 本机 `claude --version` 已经是 `2.1.277`，`codex-cli 0.154.0` 与 `gh 2.100.0` 未变。下一节的两项检查都重跑过：四条启动命令仍然全部 `bash -n exit=0`，它们用到的 flag 在 `claude --help` 与 `codex exec --help` 里仍然存在、取值也没变。结论不变，只是验证基准从 `2.1.273` 扩成了 `2.1.273` 与 `2.1.277` 两个版本。
+
+## 启动形态（AC5，已执行）
+
+`references/agents.md` 里的四条启动命令全部通过 `bash -n`：
+
+```text
+bash blocks found: 4
+form 1: bash -n exit=0
+form 2: bash -n exit=0
+form 3: bash -n exit=0
+form 4: bash -n exit=0
+```
+
+四条命令用到的每个 flag 都在本机 help 里存在，取值也对得上：
+
+| Flag | 来源 | help 里的形态 |
+|---|---|---|
+| `-C` | `codex exec --help` | `-C, --cd <DIR>` |
+| `--model` | `codex exec --help` | `-m, --model <MODEL>` |
+| `--config` | `codex exec --help` | `-c, --config <key=value>` |
+| `--sandbox` | `codex exec --help` | `-s, --sandbox <SANDBOX_MODE>`，可选值含 `read-only`、`workspace-write` |
+| `--ephemeral` | `codex exec --help` | `--ephemeral` |
+| `-p` | `claude --help` | `-p, --print` |
+| `--model` | `claude --help` | `--model <model>` |
+| `--effort` | `claude --help` | `--effort <level>`，可选值 `low, medium, high, xhigh, max` |
+| `--no-session-persistence` | `claude --help` | `--no-session-persistence` |
+| `--output-format` | `claude --help` | `--output-format <format>`，可选值 `"text", "json", "stream-json"` |
+| `--tools` | `claude --help` | `--tools <tools...>` |
+| `--strict-mcp-config` | `claude --help` | `--strict-mcp-config` |
+| `--mcp-config` | `claude --help` | `--mcp-config <configs...>` |
+
+两处要留意：`--effort xhigh` 是 help 明确列出的合法取值，所以 `agents.md` 里「传了非法值只会打 warning 然后静默回落」的那条，判据是 stderr 干净而不是退出码；`--output-format json` 是单结果模式，不发 `init` 事件，所以 Claude 那边能验的是 model / context / session / completion 四项，tools 与 permission mode 只有 `stream-json` 才有。
+
+## 场景矩阵（AC6）
+
+| 场景 | 输入 | 观察到的结果 | 结论 | 方式 |
+|---|---|---|---|---|
+| 轮数为零 | `/at-review-pr 0` | 在任何写操作与会话启动之前拒绝，并指出接受的写法：十进制正整数 | PASS | 推演（`SKILL.md:25`「Only an absent `rounds` takes the default」） |
+| 轮数是小数 | `/at-review-pr 1.5` | 同上，按非整数拒绝 | PASS | 推演（同上） |
+| 未知 provider | `/at-review-pr 3 gemini claude` | 拒绝，`reviewer` 只接受 `codex` / `claude` | PASS | 推演（`SKILL.md:20` 参数表、`SKILL.md:25`「unknown providers before writes or agent launches」） |
+| 多出一个位置参数 | `/at-review-pr 3 codex claude extra` | 拒绝，位置参数只有三个 | PASS | 推演（`SKILL.md:25`「extra positional arguments」） |
+| `pr=` 写法不对 | `/at-review-pr pr=#14`、`pr=https://…`、`pr=amyteq/at_wxclip#14` | 拒绝并说明只接受裸数字，不做「修正」 | PASS | 推演（`SKILL.md:23`「Accept only the bare number」） |
+| `pr=` 不在首位 | `/at-review-pr 3 pr=14` | 拒绝，`pr=` 只在第一个 token 位置被识别 | PASS | 推演（`SKILL.md:18` 参数表「recognized **only as the first token**」、`SKILL.md:25`「anywhere but first」） |
+| 目标缺失或有歧义 | 不给 `pr=`，当前分支没有唯一的 open PR | 提一个问题，零个改变状态的远程调用 | PASS | 推演（`SKILL.md:29`「Resolve the PR in this order」） |
+| `pr=` 与分支不一致 | `pr=14`，但当前分支对应另一条 PR | 以 `pr=` 为准，并在启动前的确认里写明这次覆盖，不静默切换 | PASS | 推演（`SKILL.md:29`「state the override in the pre-launch confirmation」） |
+| 最后一个 writer 阶段之后 | 预算用尽 | 跑一次只读的完整 review；它不再授予额外的 writer 阶段 | PASS | 推演（`SKILL.md:62`「It grants **no extra writer phase**」、`SKILL.md:64`） |
+| 批准前 head 变了 | 远程 head 与快照不符 | 停下来对账，不批准过期的 diff | PASS | 推演（`SKILL.md:54`「Do not silently approve a stale diff」、`SKILL.md:80`） |
+| PR 由当前登录账号创建 | GitHub 拒绝自评 | 走 `approval-eligible` 评论路径，并**以成功收尾**，不再多跑一轮 | PASS | 推演（`SKILL.md:82`「That verdict **ends the loop successfully**」） |
+
+上面标「推演」的行都不需要联网：判据是写下来的规则本身，行末的 `文件:行` 加引号里的原文就是出处。**行号按本记录所在提交时的 `.claude/skills/at-review-pr/SKILL.md` 计**；行号会随后续编辑漂移，引号里的原文和下面的小节归属才是耐久的锚点，对不上时以后者为准重新定位：参数解析在 “Inputs and preflight”（`SKILL.md:12-32`），轮次与收尾在 “Numbered rounds”（`SKILL.md:52-64`），批准在 “Terminal approval and report”（`SKILL.md:76-84`）。真正要联网的只有一条 —— 对着一条在飞的 PR 跑完整循环，那条明确在 #16 的非目标里。
+
+## 那条「假发现」是什么
+
+`references/agents.md` 的 handoff packet 一节要求每个阶段的 validation 行只写**真的跑过**的工具和命令，同时又要求 coordinator 在据此否定一个阶段之前，先用 `command -v <name>` 和 help 确认这个工具确实不存在。
+
+两条规则一起才成立，原因是这个失效模式：reviewer 看到 validation 行里一个仓库树里搜不到的工具名，就判它是编造的。但**宿主机上的工具本来就不出现在仓库树里** —— `gh`、`codex`、`claude`、`make` 都是这样。「这个仓库里没用过它」不等于「它不存在」。把一份诚实的报告判成编造，比放过一条含糊的 validation 行更糟：前者会让一个真实修复被退回，还会教会后面的会话少写证据。
+
+所以判据是可执行的，不是印象：跑 `command -v`，跑它的 help，两样都拿不到才算数。
+
+## 仓库检查（AC8）
+
+```text
+$ git rev-parse HEAD                  # 这次记录绑定的 commit
+17ecc3a7498d835a1397e5bbbe9c6406d5e916a5
+
+$ make lint test                      # 2026-09-19 复跑
+.venv/bin/python -m ruff check .
+All checks passed!
+.venv/bin/python -m ruff format --check .
+60 files already formatted
+.venv/bin/python -m pytest
+404 passed in 20.75s
+
+$ git diff --check
+(无输出，exit=0)
+```
+
+一条结果只在它被观察到的那个 commit 上成立，所以这里先记 `git rev-parse HEAD` 再记 `make lint test`：上面这组输出是在 `17ecc3a` 上实际跑出来的，不是从别处抄来的断言。head 一动就要重跑并把 SHA 一起换掉 —— 没有 SHA 的结果没法跟任何 commit 对上，也就不能当证据用。`404 passed` 后面的秒数每次都会有零点几秒的抖动，对不上不算回归，`404 passed` 这个数才是要对的。
+
+`ruff format` 那行数的是 36 个 `.py` 加 24 个 `.md`（这个版本的 ruff 会去格式化 Markdown 里的 Python 代码块），所以它跟着文档数走，不跟着代码走 —— 2026-09-17 首次记录时是 `57`，差的 3 个正是本 PR 新增的 `docs/test/` 三份 Markdown。`temp/` 被 git 忽略，根目录那一跑不扫它。`404 passed` 两次一致。
+
+这次改动是 Markdown、软链接和文档，外加**六处注释/docstring 里的路径字符串**，全都跟着 `docs/` 的改名同步、不动任何代码、行为或逻辑：`wxclip/__init__.py`、`wxclip/__main__.py`、`wxclip/ca.py`、`scripts/appex-flags-preload.c`、`scripts/run-wechat-proxied.sh`、`pyproject.toml`。`web/` 下也动了一行 —— `web/README.md:3` 那句指向背景文档的路径同样跟着改名，是 Markdown 正文里的路径字符串，`inject.js`、`dashboard.html`、`dashboard.js` 一行未动；`tests/` 整个目录一行未动。所以 404 passed 是**未变的基线**，不是新增覆盖。`git status --porcelain` 里没有来自 `downloads/`、`captures/`、`processed/`、`temp/` 的任何条目，也没有 `.env`。

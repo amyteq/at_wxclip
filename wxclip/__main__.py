@@ -23,7 +23,7 @@ from wxclip.keystream import KeystreamError
 from wxclip.media import MediaError, probe
 from wxclip.summarize import SummarizeError
 
-# Subcommands land with their milestones; see docs/开发计划.md.
+# Subcommands land with their milestones; see docs/development-plan.md.
 PLANNED: dict[str, str] = {}
 
 MISSING_MITMPROXY = (

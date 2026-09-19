@@ -4,7 +4,7 @@
 
 ## 工作原理
 
-机制以参考实现 [`WeChatVideoDownloader`](https://github.com/harrysun2006/WeChatVideoDownloader) 的代码为准（已逐行核对，见 `docs/项目背景.md`）：
+机制以参考实现 [`WeChatVideoDownloader`](https://github.com/harrysun2006/WeChatVideoDownloader) 的代码为准（已逐行核对，见 `docs/project-background.md`）：
 
 ```text
 ① WeChat 打开视频号页面
@@ -45,7 +45,7 @@
 
 - **Python**：MITM 代理（注入 + 抓取 `decode_key`）、keystream、直连下载、XOR 解密、以及提供管理与下载面板的 web server。运行时**零第三方依赖**（代理那一半用可选的 `mitmproxy`，下载走标准库 `urllib`）
 - **JavaScript**：注入到视频号页面里的 hook 脚本 `web/inject.js`
-- **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走 Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见 `docs/项目背景.md`
+- **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走 Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见 `docs/project-background.md`
 
 **keystream 不再需要 Node。** 参考实现把它交给 `decrypt.js`（5.2 MB 的 Emscripten 产物，wasm 以 base64 内嵌，导出 `getDecryptionArray(seedString)`）；M1 把它认出来是标准 ISAAC64，用 `decode_key` 作种子填进结果数组第 0 槽，每个 64 位字按**大端**吐出 131072 字节。`wxclip/keystream.py` 就是这个算法的 Python 实现，和 `decrypt.js` 的输出**逐字节一致**——`evals/README.md` 的黄金样本表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。
 
@@ -57,7 +57,7 @@ make lint test      # 检查 + 测试
 python -m wxclip --help
 ```
 
-准备工作两步，细节和判定方法见 `docs/M0-操作步骤.md`：
+准备工作两步，细节和判定方法见 `docs/M0-runbook.md`：
 
 ```bash
 .venv/bin/python -m wxclip ca      # 生成本地 CA，打印指纹与该装到哪个信任库
@@ -157,8 +157,24 @@ wxclip extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 | `scripts/` | 给人手动执行的入口脚本                                   |
 | `tools/`   | 辅助小工具，不属于交付包                                 |
 | `evals/`   | 解码/提取/总结质量的固定样本与校验                        |
+| `.claude/skills/` | 本仓库自带的 Claude Code skill（`at-review-pr` / `at-refine-issue`），见下一节 |
 
-详见 `docs/目录说明.md`；智能体协作约定见 `AGENTS.md`。
+详见 `docs/directory-guide.md`；智能体协作约定见 `AGENTS.md`。
+
+## Claude Code 项目 skill
+
+仓库自带两个开发流程 skill，正文在 `.claude/skills/<name>/SKILL.md`，`.agents/skills/` 下是指向它们的仓库内相对软链接。两个 skill 自身都不往仓库里加运行时代码。写入范围不一样，别弄混：`at-refine-issue` 只读写 issue 正文、评论与 label，永远不碰代码；`at-review-pr` 除了发布 review 与处置报告，还会在已批准的范围内启动一个 writer 会话去改**被 review 的那条 PR** —— 该 PR 涉及的源码、测试、文档都可能被改动，并在已授权时提交、推送到该 PR 的 head 分支。
+
+| Skill | 调用 | 做什么 |
+|-------|------|--------|
+| `at-review-pr` | `/at-review-pr [pr=<n>] [rounds] [reviewer] [writer]` | 用互相独立的 Codex / Claude Code 会话跑有界的「review → 修/申辩/推迟 → 再 review」循环，每条发现有稳定 ID 与状态机，批准前必须对最终 head 跑一次完整 review |
+| `at-refine-issue` | `/at-refine-issue <issue-url\|number> [说明]` | 把一条已有 issue 改写成工单：编号稳定的验收标准（`AC1`…`ACn`）、一条自包含的任务 comment、以及可复制的启动 prompt |
+
+参数默认值：`at-review-pr` 的 `rounds` 默认 `10`、`reviewer` 默认 `codex`、`writer` 默认 `claude`；`pr=<n>` 省略时按「显式上下文 → 当前分支唯一的 open PR」解析，解析不出来就问，不猜。`at-refine-issue` 的第一个参数是 issue URL 或编号，正常情况下必须给；只有当会话里已经明确、无歧义地选定了唯一一条 issue 时才允许省略，两条候选或「我们刚才说的那条」一律要问、不猜。后面跟可选的细化说明。
+
+两个 skill 都不会自己派工：`at-refine-issue` 产出的工单在人发出启动 prompt 之前是死的，`at-review-pr` 也不会合并 PR。
+
+**Codex 侧要显式指路。** Codex CLI 会向上查找 `.agents/skills`，但不会像 Claude Code 那样把 skill 当斜杠命令自动挂上来，所以在 Codex 里用的时候，直接把文件指给它，例如 `按 .claude/skills/at-review-pr/SKILL.md 跑 PR #14 的 review 循环`。软链接只是让 `.agents/skills/at-review-pr/SKILL.md` 这条路径也能读到同一份正文。
 
 ## 参考
 

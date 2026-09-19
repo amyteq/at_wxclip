@@ -6,7 +6,7 @@
  * binary. It never opens an NSS database in the process that does the verifying, so
  * installing the wxclip CA into ~/.pki/nssdb, the system anchors or p11-kit has no
  * effect and the page fails with "your connection is not private" (observed 2026-09-11,
- * see docs/项目背景.md).
+ * see docs/project-background.md).
  *
  * WeChatAppEx does support --ignore-certificate-errors-spki-list, which makes Chromium
  * accept a chain containing one specific public key - far narrower than turning

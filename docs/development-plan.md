@@ -1,6 +1,6 @@
 # 开发计划
 
-依据 `docs/项目背景.md`（讨论 #2）整理，并按参考实现的源码核对过一遍（2026-09-11，见该文件的「与参考实现核对后的更正」）。本文件是计划的事实源；里程碑勾选在 issue 里维护。
+依据 `docs/project-background.md`（讨论 #2）整理，并按参考实现的源码核对过一遍（2026-09-11，见该文件的「与参考实现核对后的更正」）。本文件是计划的事实源；里程碑勾选在 issue 里维护。
 
 ## Scope 评估
 
@@ -23,7 +23,7 @@
 
 **建议现在不写完整 specs**，先用 1–2 天做 M0 spike 把上面两处未知打掉。spike 结束后：
 
-- 两处都通了 → 直接按里程碑推进，本计划 + `docs/项目背景.md` 里的协议记录当设计文档就够了；
+- 两处都通了 → 直接按里程碑推进，本计划 + `docs/project-background.md` 里的协议记录当设计文档就够了；
 - Linux 客户端不走 H5 / 没有 bridge → 停下来重新评估，这时才值得为「怎么拿到 `decode_key`」单独写一份 `docs/specs/decode-key.md`（需求 + 设计 + 可行性）。
 
 理由：这个项目的成本不在写代码，而在摸清 Linux 客户端的行为；在摸清之前写出来的设计大概率要重写。参考实现的机制已经读明白了，不需要再为它写规格。
@@ -32,18 +32,18 @@
 
 ### M0 — spike：打通 Linux 侧可行性（最先做，1–2 天）
 
-工具侧已经就绪（`wxclip proxy` / `wxclip ca` / `web/inject.js`，操作步骤见 `docs/M0-操作步骤.md`），剩下的都是要真人在 WeChat 里操作才能验的：
+工具侧已经就绪（`wxclip proxy` / `wxclip ca` / `web/inject.js`，操作步骤见 `docs/M0-runbook.md`），剩下的都是要真人在 WeChat 里操作才能验的：
 
 - [x] 让 Linux 版 WeChat 走本机代理：**应用内代理设置可用**（issue #4 的截图）
 - [x] 代理与 CA 落地：mitmproxy + 自签 CA（`~/.config/wxclip/ca/`），注入与回传通道已在真实 TLS 上验证（`channels.weixin.qq.com` 能被 MITM 出明文；注入与 `/__wxclip/*` 端点用 curl 走通）
-- [x] 让 WeChat 信任这张 CA：**只有主进程做得到**。装进 Flatpak 沙箱的 NSS 库后主进程接受本地证书、HTTPS 解出明文（2026-09-11 实测，无一次 TLS 失败）；**webview 靠装 CA 永远不行**，它的根证书编译在 `WeChatAppEx` 二进制里，做校验的进程从不打开 NSS 数据库（证据见 `docs/项目背景.md`）
+- [x] 让 WeChat 信任这张 CA：**只有主进程做得到**。装进 Flatpak 沙箱的 NSS 库后主进程接受本地证书、HTTPS 解出明文（2026-09-11 实测，无一次 TLS 失败）；**webview 靠装 CA 永远不行**，它的根证书编译在 `WeChatAppEx` 二进制里，做校验的进程从不打开 NSS 数据库（证据见 `docs/project-background.md`）
 - [x] **H5 路线是否存在**：成立。webview 打开的就是 `channels.weixin.qq.com/web/pages/feed?oid=…&nid=…`（标题「视频号」），URL 与参考实现一致
 - [x] **把 webview 也塞进代理**：`flatpak override --env=http_proxy=…` 可行，webview 确实来连代理（桌面图标/托盘启动走 systemd app scope，`flatpak run --env=…` 对它无效）
 - [x] **让 webview 接受我们的证书**：唯一的路是给它加 `--ignore-certificate-errors-spki-list=<base64(sha256(SPKI))>`（只放行我们这一个公钥）。它的命令行由 `libwmpf_host_export.so` 拼、不读环境变量，所以用 LD_PRELOAD 在 exec 时插进去（`scripts/appex-flags-preload.c` + `scripts/build-appex-preload.sh`）。**已生效**：switch 进了 browser 与 NetworkService 两个进程的 cmdline，页面正常打开
 - [x] 页面经过代理后，确认注入生效、`window.WeixinJSBridge` 存在且可 hook：`probe` 里 `has_bridge: true`/`hooked: true`，`hook` 里 `has_invoke: true`/`has_on: true`
 - [x] 抓一次真实的 JSAPI 响应：api 是 `finderH5ExtTransfer`（同 macOS）、`err_msg` 是 `H5ExtTransfer:ok`（同 Windows），`decode_key` 是**带引号的字符串**、8–10 位十进制（不是 20 位）。脱敏样本进了 `evals/jsapi-response-linux-20260911.md`
 - [x] 用 Node 跑 `decrypt.js` + 真实 `decode_key`，手工 XOR 前 128 KiB：产出的 mp4 能播（`tools/m0-download-decrypt.mjs`，h264 1080x2344 + aac 7.48s，`ffmpeg -f null -` 零报错）
-- [x] 把结论写回 `docs/项目背景.md` 的「待确认的前提」，并更新本计划
+- [x] 把结论写回 `docs/project-background.md` 的「待确认的前提」，并更新本计划
 
 **退出标准 —— 已达成**（2026-09-11）：手工串起来下载并解密出了一个可播放的视频文件。注入路线在 Linux 上成立，前提是给 webview 加上那个 spki switch。
 

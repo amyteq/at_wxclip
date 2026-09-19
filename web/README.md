@@ -1,6 +1,6 @@
 # web
 
-两件事：注入脚本，和 M2 起的 dashboard（keystream 自 M1 起在 Python 侧）。注意这里的职责和讨论里的描述不一样，见 `docs/项目背景.md`：
+两件事：注入脚本，和 M2 起的 dashboard（keystream 自 M1 起在 Python 侧）。注意这里的职责和讨论里的描述不一样，见 `docs/project-background.md`：
 
 1. **注入脚本（hook script）** —— `inject.js`，由代理注入到视频号 H5 页面里，hook `window.WeixinJSBridge.invoke`，从 JSAPI 响应里取出**每一条** `media[]` 的 `url + url_token`、`decode_key`、`file_size`，回传给 wxclip（实测一次 8 条；参考实现只取 `media[0]`，选哪一条由 `wxclip capture --index/--all` 决定）。**`decode_key` 只在这里拿得到**，被动抓请求是抓不到的。参考实现见 `electron/proxyServer.js` 里的 `injection_script`。
 

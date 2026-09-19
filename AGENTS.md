@@ -1,6 +1,6 @@
 # Agent working agreement
 
-`at_wxclip` (wxclip) captures a WeChat Channels video's URL **and its `decode_key`** through a local MITM proxy that injects a hook script, downloads the file directly, XOR decrypts its first 128 KiB with an ISAAC64 keystream seeded by that key, and offers follow-up processing (screenshots, text extraction, summarization). Read `README.md` and `docs/项目背景.md` before product-level changes — the mechanism is not what the intro discussion describes, and the background doc records where they differ. Read `docs/开发计划.md` before picking up work.
+`at_wxclip` (wxclip) captures a WeChat Channels video's URL **and its `decode_key`** through a local MITM proxy that injects a hook script, downloads the file directly, XOR decrypts its first 128 KiB with an ISAAC64 keystream seeded by that key, and offers follow-up processing (screenshots, text extraction, summarization). Read `README.md` and `docs/project-background.md` before product-level changes — the mechanism is not what the intro discussion describes, and the background doc records where they differ. Read `docs/development-plan.md` before picking up work.
 
 This file is the single source of truth for shared agent instructions. Claude Code reads it through `CLAUDE.md`; Codex reads it directly from the repo root. Some Codex environments mount `.agents/` and `.codex/` read-only, so nothing unique lives there.
 
@@ -13,7 +13,7 @@ This file is the single source of truth for shared agent instructions. Claude Co
 
 ## Repository layout
 
-Flat and slim by intent — see `docs/目录说明.md`:
+Flat and slim by intent — see `docs/directory-guide.md`:
 
 | Path       | Holds                                                        |
 |------------|--------------------------------------------------------------|
