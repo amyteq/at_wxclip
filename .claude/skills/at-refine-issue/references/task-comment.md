@@ -168,7 +168,7 @@ Snapshot before every edit — `url`, `comment_id`, `author`, `updated_at`, `sha
 
 Once a human has sent a launch prompt, the comment is a contract a session may already be acting on. The rule for changing it is decided by what the change does to the existing bytes: append and the dispatch continues, rewrite and it stops.
 
-Whether a dispatch has happened is decided fail-closed by the skill's *Has this task been dispatched?* rule: a run treats the comment as dispatched unless the human says otherwise and nothing on the issue reads as a run in flight. The first write after a run learns of a dispatch is the record itself, so the next run reads it instead of inferring it:
+Whether a dispatch has happened is decided by the skill's complete fail-closed [*Has this task been dispatched?*](../SKILL.md#has-this-task-been-dispatched) rule. Apply that rule directly rather than restating it here. The first write after a run learns of a dispatch is the record itself, so the next run reads it instead of inferring it:
 
 ```text
 --- dispatched <YYYY-MM-DD> ---
