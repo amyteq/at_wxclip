@@ -17,6 +17,7 @@ The template below is written for `amyteq/at_wxclip`, so some of what it names i
 | `<live actions>` | The validation that cannot run offline, so an issue must say whether it needs them | live capture, a real model call, or a WeChat client |
 | `<forbidden evidence>` | The values that may never be quoted as evidence | captured media, a `decode_key` value, or proxy CA material |
 | `<reviewer notation>` | How the repository writes the reviewer, distinct from an account GitHub can notify | the agent name without an `@`: `by claude`, `by codex` |
+| `<blocked labels>` | The labels that make an unresolved material decision visibly block dispatch | `decision:needed` and `ai:blocked` |
 
 Fill them from the resolved repository's own instructions, never from the third column, and report any slot that repository has no equivalent for.
 
@@ -76,7 +77,7 @@ Name the checks that must run and what counts as passing. `<repository check>` i
 
 ## Owner 与 reviewer
 
-Owner: @handle · Reviewer: by codex
+Owner: @handle · Reviewer: <reviewer notation>
 
 Owner is a GitHub account written with `@`; reviewer is `<reviewer notation>`. The two notations differ on purpose — one is an account GitHub can notify, the other is not.
 
@@ -93,7 +94,7 @@ What that authorizes, and what it does not. Refinement authority is never implem
 Status — keep exactly one of these two sentences, the one that matches the labels this issue actually carries:
 
 - *Ready:* Ready for explicit human dispatch. Creating this issue and comment has not started implementation. Sending either prompt below authorizes the work described in the task comment.
-- *Blocked:* **Not ready for dispatch:** `<the unresolved decision, named>` is open, so this issue carries `decision:needed` and `ai:blocked`. Creating this issue and comment has not started implementation, and the prompts below must not be sent until a human settles that decision and the block is lifted.
+- *Blocked:* **Not ready for dispatch:** `<the unresolved decision, named>` is open, so this issue carries `<blocked labels>`. Creating this issue and comment has not started implementation, and the prompts below must not be sent until a human settles that decision and the block is lifted.
 
 **Goal prompt** (where the harness supports `/goal`):
 

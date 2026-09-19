@@ -22,7 +22,7 @@ Usage: `/at-refine-issue <issue-url|number> [refinement instructions]`. Parse th
 
 Resolve the target before any remote mutation:
 
-1. A full URL wins over the current repository; if its `owner/repo` differs, use the URL's repository, say so in the final report, and refine against *that* repository's conventions — its own agent instructions, plan of record, label set, and language rule. The templates carry that split explicitly: each repository-bound value is a named slot with this repository's instance beside it ([task-comment.md](references/task-comment.md#repository-bound-slots), [issue-body.md](references/issue-body.md#repository-bound-slots)), and a foreign target fills every slot from its own repository. Where the resolved repository has no equivalent of something named below, report the gap or ask; never import this repository's conventions into another repository's issue. A pull-request URL, a discussion URL, or another repository's bare number is not a valid target — stop and ask.
+1. A full URL wins over the current repository; if its `owner/repo` differs, use the URL's repository, say so in the final report, and refine against *that* repository's conventions — its own agent instructions, plan of record, label set, reviewer notation, and language rule. The templates carry that split explicitly: each repository-bound value is a named slot with this repository's instance beside it ([task-comment.md](references/task-comment.md#repository-bound-slots), [issue-body.md](references/issue-body.md#repository-bound-slots)), and a foreign target fills every slot from its own repository. Where the resolved repository has no equivalent of something named below, report the gap or ask; never import this repository's conventions into another repository's issue. A pull-request URL, a discussion URL, or another repository's bare number is not a valid target — stop and ask.
 2. An omitted target is allowed only when the conversation has already selected exactly one issue explicitly and unambiguously. Two candidates, an implied "the issue we discussed", or a bare number with no current repository means ask. Do not guess.
 3. Verify the target in the resolved repository. `gh issue view --json` exposes no lock state — its `JSON FIELDS` list (gh 2.100.0) has no `locked` — so read lock and kind from the REST object:
 
@@ -115,7 +115,7 @@ Then:
 
 1. Publish or update the task comment; read it back and record `id`, `html_url`, `updated_at`, and the body hash.
 2. Update the issue body, including the Execution section carrying that real permalink.
-3. Apply readiness labels, using only labels that already exist in [`.github/labels.yml`](../../../.github/labels.yml).
+3. Apply readiness labels, using only labels that already exist in the resolved repository's label registry; in this repository, that registry is [`.github/labels.yml`](../../../.github/labels.yml).
 4. Return the launch prompts.
 
 The comment comes first because the issue body has to link it. If step 2 fails after step 1 succeeded, recover per [Revisions, concurrency, recovery](#revisions-concurrency-recovery) — never by posting a second comment.
@@ -126,9 +126,9 @@ In this repository the promotion rules are written down in two places that must 
 
 - Use existing labels only. A needed-but-missing label is reported, not created.
 - Preserve unrelated labels, assignees, milestone, and title unless the request changes them.
-- An unresolved material decision keeps the issue visibly blocked — `decision:needed` plus `ai:blocked`, with the decision named in the body. Do not paper over it to reach `ai:ready`. The Execution section then uses the *Blocked* status sentence from [issue-body.md](references/issue-body.md): a body carrying `ai:blocked` must never also tell the reader it is ready for dispatch.
-- `ai:ready` means "an agent may pick this up when dispatched". It is not a dispatch, and neither is the existence of a task comment. Only a human sending a launch prompt dispatches the work.
-- `ai:implementing` belongs to the session doing the work, not to this skill. Refinement never applies it.
+- In this repository, an unresolved material decision keeps the issue visibly blocked — `decision:needed` plus `ai:blocked`, with the decision named in the body. Do not paper over it to reach `ai:ready`; for another repository, substitute its corresponding labels. The Execution section then uses the *Blocked* status sentence from [issue-body.md](references/issue-body.md): a body carrying the resolved repository's blocked label must never also tell the reader it is ready for dispatch.
+- In this repository, `ai:ready` means "an agent may pick this up when dispatched"; use the resolved repository's equivalent elsewhere. It is not a dispatch, and neither is the existence of a task comment. Only a human sending a launch prompt dispatches the work.
+- In this repository, `ai:implementing` belongs to the session doing the work, not to this skill; use the resolved repository's equivalent elsewhere. Refinement never applies it.
 
 ## Launch prompts
 
@@ -181,12 +181,16 @@ gh issue view <n> --repo <owner>/<repo> --json body --jq .body \
   | awk '/^## Execution/{seen = 1} seen' | grep -oE 'issuecomment-[0-9]+' | sort -u
 ```
 
-| Candidates passing adoption | Ids that query returns | Outcome |
+| Candidates passing adoption | Distinct comment ids in the issue's Execution section | Outcome |
 |---|---|---|
-| The one the id names | Exactly one | That comment is current. Every other candidate is superseded: never edit it, never repoint the issue at it, never name it in a launch prompt |
-| None matches the id | Exactly one | Stop and report the id and the adoption check it failed — wrong author, missing sections, deleted comment. Never substitute another candidate for it |
+| Any count | Two or more | Stop. Report every candidate with its `revision`, `updated_at`, and permalink, report every returned id, and ask which id is current. Never infer currency from candidate count |
+| The candidate the id names is among them | Exactly one | That comment is current. Every other candidate is superseded: never edit it, never repoint the issue at it, never name it in a launch prompt |
+| No candidate matches the id | Exactly one | Stop and report the id and the adoption check it failed — wrong author, missing sections, or deleted comment. Never substitute another candidate for it |
 | Exactly one | None — no Execution section, or no id in it | That candidate is current, and this run repairs the Execution section to link it. This is the "published, issue update failed" recovery and the only case where a candidate becomes current without the issue already saying so |
-| Two or more | None, or two or more | Stop. Report every candidate with its `revision`, `updated_at`, and permalink, and ask which is current. A chain whose head cannot be named from the issue is exactly what this rule refuses to guess through |
+| None | None — no Execution section, or no id in it | Stop. There is no candidate to select or link; report that no current revision can be identified and ask how to recover |
+| Two or more | None — no Execution section, or no id in it | Stop. Report every candidate with its `revision`, `updated_at`, and permalink, and ask which is current. A chain whose head cannot be named from the issue is exactly what this rule refuses to guess through |
+
+Any combination not listed above, or any run that cannot determine either count, stops and asks which revision is current. It does not infer currency, mutate a comment or issue, or dispatch work without a selected current revision.
 
 Two cross-checks make the answer falsifiable rather than advisory, and both run before any write:
 
@@ -203,7 +207,7 @@ Undispatched requires all three of:
 
 1. The invoking human says in this session that the task was never dispatched, or asks for the draft to be replaced.
 2. The comment body carries no `--- dispatched <YYYY-MM-DD> ---` record, and its status sentence still says it is prepared but not dispatched.
-3. Nothing on the issue after that comment reads as a run in flight — no later comment claiming or reporting the task, and no assignee, `ai:implementing` label, or linked pull request added since. Read the later comments *with their bodies*: whether one claims or reports the task is a judgement about what it says, which an author-and-URL projection cannot answer.
+3. Nothing on the issue after that comment reads as a run in flight — no later comment claiming or reporting the task, and no assignee, the resolved repository's in-progress label (in this repository, `ai:implementing`), or linked pull request added since. Read the later comments *with their bodies*: whether one claims or reports the task is a judgement about what it says, which an author-and-URL projection cannot answer.
 
    ```bash
    gh issue view <n> --repo <owner>/<repo> --json comments,closedByPullRequestsReferences \

@@ -8,7 +8,7 @@ Write every published comment as **soft-wrapped Markdown**: one paragraph, list 
 
 Leave a blank line before any `---`. Without it the preceding paragraph parses as a setext H2 and renders as a heading, which is how a signature separator silently turns the line above it bold.
 
-That rule binds the header lines of the templates below too, which is why each `Base: …`, `Push: …`, and link line stands as its own paragraph with a blank line after it. Two adjacent lines are one hard-wrapped paragraph in source, which is exactly what the rule forbids; GitHub's comment renderer happens to turn that single newline into a `<br>`, but the rule governs the source, and separate paragraphs render on separate lines under every renderer. Do not close the gap by joining them into one long line either — that loses the line break the reader needs.
+That rule binds the header and record lines of the templates below too, which is why each `Base: …`, `Push: …`, link, `Ledger: …`, `Validation: …`, `Verdict: …`, and `Unresolved P0/P1: …` line stands as its own paragraph with a blank line after it. Two adjacent lines are one hard-wrapped paragraph in source, which is exactly what the rule forbids; GitHub's comment renderer happens to turn that single newline into a `<br>`, but the rule governs the source, and separate paragraphs render on separate lines under every renderer. Do not close the gap by joining them into one long line either — that loses the line break the reader needs.
 
 ## Reviewer
 
@@ -25,8 +25,11 @@ Base: [BASE_SHA_SHORT](BASE_COMMIT_URL) · Reviewed head: [HEAD_SHA_SHORT](HEAD_
 | F001 | P1 | Trigger and resulting defect | file:line + test/reproduction | open |
 
 Ledger: resolved IDs; accepted rebuttals; accepted deferrals with residual severity; pending/reopened IDs and new evidence. Do not restate accepted requests as new findings.
+
 Validation: commands and results actually observed, skipped checks with reasons. Name only tools and commands that actually ran in this phase — a validation line is evidence, so an invented tool, harness or wrapper name in it is a defect in the report itself.
+
 Verdict: continue / approval-eligible / blocked / budget-exhausted.
+
 Unresolved P0/P1: IDs or none. Residual P2/P3: IDs or none.
 
 ---

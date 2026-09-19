@@ -33,12 +33,16 @@ Those three checks answer "is this candidate one of this run's task comments". T
 
 **The issue's Execution section names the current revision, and nothing else does.** Not the highest `revision=` number — a publish that succeeded while the issue update failed leaves a high number on a comment the issue never pointed at. Not the newest `updated_at` — appending the dispatch record to a superseded comment touches it later than the live one.
 
-| Candidates passing adoption | Ids in the issue's Execution section | Outcome |
+| Candidates passing adoption | Distinct comment ids in the issue's Execution section | Outcome |
 |---|---|---|
-| The one the id names | Exactly one | That comment is current; every other candidate is superseded and must not be edited, repointed, or named in a launch prompt |
-| None matches the id | Exactly one | Stop and report the id and the check it failed. Never substitute another candidate for it |
-| Exactly one | None (no Execution section, or no id in it) | That candidate is current; repair the Execution section to link it. This is the "published, issue update failed" recovery and the only case where a candidate becomes current without the issue already saying so |
-| Two or more | None, or two or more ids | Stop. Report every candidate with its `revision`, `updated_at`, and permalink, and ask which is current |
+| Any count | Two or more | Stop. Report every candidate with its `revision`, `updated_at`, and permalink, report every returned id, and ask which id is current. Never infer currency from candidate count |
+| The candidate the id names is among them | Exactly one | That comment is current. Every other candidate is superseded: never edit it, never repoint the issue at it, never name it in a launch prompt |
+| No candidate matches the id | Exactly one | Stop and report the id and the adoption check it failed — wrong author, missing sections, or deleted comment. Never substitute another candidate for it |
+| Exactly one | None — no Execution section, or no id in it | That candidate is current, and this run repairs the Execution section to link it. This is the "published, issue update failed" recovery and the only case where a candidate becomes current without the issue already saying so |
+| None | None — no Execution section, or no id in it | Stop. There is no candidate to select or link; report that no current revision can be identified and ask how to recover |
+| Two or more | None — no Execution section, or no id in it | Stop. Report every candidate with its `revision`, `updated_at`, and permalink, and ask which is current. A chain whose head cannot be named from the issue is exactly what this rule refuses to guess through |
+
+Any combination not listed above, or any run that cannot determine either count, stops and asks which revision is current. It does not infer currency, mutate a comment or issue, or dispatch work without a selected current revision.
 
 Read the pointer from the issue rather than inferring it; the Execution section is the last section of [issue-body.md](issue-body.md)'s template, so everything from its heading onward is in scope:
 
@@ -66,6 +70,7 @@ The template below is written for `amyteq/at_wxclip` and reads as a finished com
 | `<scratch directory>` | The git-ignored place for a run's working files | `temp/` |
 | `<repository check>` | The one command that must pass before work is reported done | `make lint test` |
 | `<forbidden evidence>` | The values that may never be quoted as evidence | captured media, a `decode_key` value, or proxy CA material |
+| `<reviewer notation>` | How the repository writes the reviewer, distinct from an account GitHub can notify | the agent name without an `@`: `by claude`, `by codex` |
 
 Fill every slot before publishing; an unsubstituted `<slot>` in a published body is a defect, exactly like an unsubstituted permalink. When the resolved repository is not `amyteq/at_wxclip`, fill them from *that* repository's own instructions and never from the third column — importing wxclip's paths, invariants, or check command into another repository's issue publishes instructions its executing session cannot follow. Where the resolved repository has no equivalent for a slot, say so in the comment, report the gap, and leave the requirement in the middle column visible rather than inventing a filling for it.
 
@@ -75,7 +80,7 @@ Fill every slot before publishing; an unsubstituted `<slot>` in a published body
 <!-- at-refine-issue:task repo=<owner>/<repo> issue=<n> revision=<r> -->
 ## Task — <short imperative title>
 
-**Repository:** `<owner>/<repo>` · **Tracking issue:** [#<n>](<issue url>) · **Owner:** @<handle> · **Reviewer:** by <agent> · **Revision:** <r> (<date>)
+**Repository:** `<owner>/<repo>` · **Tracking issue:** [#<n>](<issue url>) · **Owner:** @<handle> · **Reviewer:** <reviewer notation> · **Revision:** <r> (<date>)
 
 One sentence on what this comment is and whether it has been dispatched. A prepared-but-undispatched task says so explicitly: publishing this comment does not start the work. That sentence, plus the `--- dispatched <YYYY-MM-DD> ---` record a later run appends once dispatch happens, is what tells a repeat run which branch it is on; with neither present the run must assume dispatched.
 
@@ -98,7 +103,7 @@ What must be true when the task is done. Name the deliverable and where it lands
 
 ### Implementation instructions
 
-1. **Establish the run.** Verify the repository and this revision, follow the provenance procedure below, work in a dedicated branch or a worktree under `<worktree root>`, keep scratch in `<scratch directory>`, record the dispatch and its allowed actions, and preserve unrelated work.
+1. **Establish the run.** Confirm that this comment's marker names the repository and issue you are working in and that the issue's Execution section still points to this revision; if either disagrees, stop and ask. Then work in a dedicated branch or a worktree under `<worktree root>`, keep scratch in `<scratch directory>`, record the dispatch and its allowed actions, and preserve unrelated work.
 2. … ordered steps, each with an observable end state …
 3. **Validate and deliver.** Run the scenario matrix and `<repository check>`, inspect the final diff, confirm nothing captured or secret is staged, and deliver per the authorization below.
 
