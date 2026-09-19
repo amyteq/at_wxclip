@@ -80,16 +80,18 @@ form 4: bash -n exit=0
 ## 仓库检查（AC8）
 
 ```text
-$ make lint test
+$ make lint test                      # 2026-09-19 复跑
 .venv/bin/python -m ruff check .
 All checks passed!
 .venv/bin/python -m ruff format --check .
-57 files already formatted
+60 files already formatted
 .venv/bin/python -m pytest
-404 passed in 20.66s
+404 passed in 20.65s
 
 $ git diff --check
 (无输出，exit=0)
 ```
 
-这次改动是 Markdown、软链接和文档，外加 `wxclip/` 里三处注释/docstring 的**路径字符串**（`__init__.py`、`__main__.py`、`ca.py`）—— 它们跟着 `docs/` 的改名同步，不动任何代码、行为或逻辑；`web/`、`tests/` 一行未动。所以 404 passed 是**未变的基线**，不是新增覆盖。`git status --porcelain` 里没有来自 `downloads/`、`captures/`、`processed/`、`temp/` 的任何条目，也没有 `.env`。
+`ruff format` 那行数的是 36 个 `.py` 加 24 个 `.md`（这个版本的 ruff 会去格式化 Markdown 里的 Python 代码块），所以它跟着文档数走，不跟着代码走 —— 2026-09-17 首次记录时是 `57`，差的 3 个正是本 PR 新增的 `docs/test/` 三份 Markdown。`temp/` 被 git 忽略，根目录那一跑不扫它。`404 passed` 两次一致。
+
+这次改动是 Markdown、软链接和文档，外加**六处注释/docstring 里的路径字符串**，全都跟着 `docs/` 的改名同步、不动任何代码、行为或逻辑：`wxclip/__init__.py`、`wxclip/__main__.py`、`wxclip/ca.py`、`scripts/appex-flags-preload.c`、`scripts/run-wechat-proxied.sh`、`pyproject.toml`。`web/` 下也动了一行 —— `web/README.md:3` 那句指向背景文档的路径同样跟着改名，是 Markdown 正文里的路径字符串，`inject.js`、`dashboard.html`、`dashboard.js` 一行未动；`tests/` 整个目录一行未动。所以 404 passed 是**未变的基线**，不是新增覆盖。`git status --porcelain` 里没有来自 `downloads/`、`captures/`、`processed/`、`temp/` 的任何条目，也没有 `.env`。
