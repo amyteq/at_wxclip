@@ -1,0 +1,26 @@
+{
+  "repository": "amyteq/at_wxclip",
+  "base_sha": "be83e6ae92b5bfeeaa41c1c8355201fb875d6499",
+  "draft_only": true,
+  "source_sha256": {
+    ".claude/settings.json": "84bc54adf50058f98b49bcff1336703009168e8dd7989f86e0392cb6e3dd69f1",
+    ".claude/settings.local.json": "c521c23d3c39c6a67395f9e0b9fffedc31965042379a14b5a5514a2730e8f177"
+  },
+  "exact_duplicates_removed_from_local": {
+    "allow": 0,
+    "ask": 0,
+    "deny": 0
+  },
+  "project_rules_moved_to_hook": {
+    "ask": ["Bash(rm *)", "Bash(rm -rf*)"],
+    "deny": [
+      "Bash(rm -rf / *)", "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf $HOME*)", "Bash(git push *--force)",
+      "Bash(git push *--force *)", "Bash(git push --force)", "Bash(git push --force *)", "Bash(git push *-f *)",
+      "Bash(git push -f *)", "Bash(git push *--delete*)", "Bash(git branch -D*)", "Bash(git update-ref -d*)"
+    ]
+  },
+  "project_bash_allow_rules_replaced": 43,
+  "local_bash_allow_rules_removed_for_classifier_review": 13,
+  "legacy_hook_delegation": false,
+  "existing_hooks_preserved_except_guard_registration": true
+}

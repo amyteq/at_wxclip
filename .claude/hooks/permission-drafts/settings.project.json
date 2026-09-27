@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Read", "Edit", "Write", "MultiEdit", "Glob", "Grep", "LS", "NotebookRead", "NotebookEdit", "WebFetch",
+      "WebSearch", "Read(~/.aws/**)", "Read(~/.config/gcloud/**)", "Read(~/.config/gh/hosts.yml)", "Bash(git status *)",
+      "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)", "Bash(gh pr view *)", "Bash(gh pr checks *)",
+      "Bash(gh issue view *)", "Bash(npm test)", "Bash(make lint test)"
+    ],
+    "ask": ["Bash(rmdir *)", "Bash(git clean*)", "Bash(gh release*)", "Bash(supabase db push*)", "Bash(supabase db reset*)"],
+    "deny": [
+      "Read(./.env.production)", "Read(~/.ssh/**)", "Edit(./.env.production)", "Edit(~/.ssh/**)", "Edit(~/.aws/**)",
+      "Edit(~/.config/gcloud/**)", "Bash(sudo*)", "Bash(su *)", "Bash(doas*)", "Bash(git reset --hard*)",
+      "Bash(git clean -fdx*)", "Bash(git clean -xfd*)", "Bash(git clean -fd*)", "Bash(git filter-branch*)",
+      "Bash(git filter-repo*)", "Bash(docker run *--privileged*)", "Bash(chmod 777*)", "Bash(chown * / *)",
+      "Bash(mkfs*)", "Bash(dd *of=/dev*)", "Bash(shutdown*)", "Bash(reboot*)", "Bash(halt*)",
+      "Bash(curl *169.254.169.254*)", "Bash(wget *169.254.169.254*)", "Bash(curl *metadata.google*)",
+      "Bash(wget *metadata.google*)", "Bash(psql * -c *drop database*)", "Bash(psql * -c *drop schema*)",
+      "Bash(psql * -c *drop table*)", "Bash(psql * -c *truncate*)", "Bash(psql * -c *delete from*)",
+      "Bash(psql * -c *alter * drop*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_development_permissions.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": true,
+    "filesystem": {
+      "allowWrite": [".", "/tmp"],
+      "denyWrite": []
+    }
+  }
+}

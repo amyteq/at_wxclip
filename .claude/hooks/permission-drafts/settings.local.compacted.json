@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rsync *)", "Bash(ssh *)", "Bash(scp *)", "Bash(az vm delete *)", "Bash(gh issue *)", "Bash(gh pr *)",
+      "Bash(git worktree *)", "Bash(git fetch *)", "Bash(git log *)", "Bash(git push *)", "Bash(deno test *)",
+      "Bash(mkdir *)", "Bash(python3 *)"
+    ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
+  },
+  "showClearContextOnPlanAccept": true,
+  "autoMemoryEnabled": false,
+  "crossSessionInbound": "refuse",
+  "autoMode": {
+    "classifyAllShell": true
+  }
+}
