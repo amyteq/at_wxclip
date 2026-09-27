@@ -2,6 +2,7 @@
   "repository": "amyteq/at_wxclip",
   "base_sha": "be83e6ae92b5bfeeaa41c1c8355201fb875d6499",
   "draft_only": true,
+  "portable_home_rewrites": [],
   "source_sha256": {
     ".claude/settings.json": "84bc54adf50058f98b49bcff1336703009168e8dd7989f86e0392cb6e3dd69f1",
     ".claude/settings.local.json": "c521c23d3c39c6a67395f9e0b9fffedc31965042379a14b5a5514a2730e8f177"

@@ -262,11 +262,12 @@ def main() -> int:
         tool_input = data.get("tool_input", {})
         if not isinstance(tool_input, dict):
             raise TypeError("Expected tool_input object")
+        pending = None
         if data.get("tool_name") == "Bash":
             command = tool_input.get("command")
             if not isinstance(command, str):
                 raise TypeError("Expected command string")
-            kind, reason, delegate = inspect(command, root)
+            kind, reason, _ = inspect(command, root)
             actual_cwd = Path(data.get("cwd") or os.getcwd()).resolve()
             if (
                 kind == "allow"
@@ -277,17 +278,15 @@ def main() -> int:
                     "ask",
                     "Git cleanup must run from the approved project root.",
                 )
-            if kind:
+            if kind == "allow":
                 print(json.dumps(decision(kind, reason)))
                 return 0
-            if not delegate:
-                return 0
+            if kind:
+                pending = decision(kind, reason)
         legacy = root / ".claude/hooks/guard_tool.py"
-        if (
-            LEGACY_GUARD_ENABLED
-            and legacy.exists()
-            and legacy.resolve() != Path(__file__).resolve()
-        ):
+        if LEGACY_GUARD_ENABLED:
+            if not legacy.is_file() or legacy.resolve() == Path(__file__).resolve():
+                raise RuntimeError("Registered legacy guard is unavailable")
             result = subprocess.run(
                 [sys.executable, str(legacy)],
                 input=raw,
@@ -297,11 +296,16 @@ def main() -> int:
                 timeout=15,
                 cwd=root,
             )
-            sys.stdout.write(result.stdout)
-            sys.stderr.write(result.stderr)
             if result.returncode not in {0, 2}:
                 raise RuntimeError("Existing hook did not finish normally")
-            return result.returncode
+            legacy_output = json.loads(result.stdout) if result.stdout.strip() else {}
+            legacy_kind = legacy_output.get("hookSpecificOutput", {}).get("permissionDecision")
+            if result.returncode == 2 or legacy_kind == "deny" or pending is None:
+                sys.stdout.write(result.stdout)
+                sys.stderr.write(result.stderr)
+                return result.returncode
+        if pending is not None:
+            print(json.dumps(pending))
         return 0
     except Exception:  # noqa: BLE001 - an unexpected hook failure must deny
         print(

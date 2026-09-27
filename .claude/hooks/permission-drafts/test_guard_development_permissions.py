@@ -48,6 +48,10 @@ class GuardTests(unittest.TestCase):
 
     def test_git_cleanup_in_another_working_directory_asks(self):
         with tempfile.TemporaryDirectory(prefix="perms-821-") as directory:
+            project = Path(directory) / "project"
+            legacy = project / ".claude/hooks/guard_tool.py"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("import sys\nsys.exit(0)\n")
             result = subprocess.run(
                 [sys.executable, str(HERE / "guard_development_permissions.py")],
                 input=json.dumps(
@@ -57,7 +61,7 @@ class GuardTests(unittest.TestCase):
                         "tool_input": {"command": "git branch -D temp/example"},
                     }
                 ),
-                env=dict(os.environ, CLAUDE_PROJECT_DIR=str(HERE)),
+                env=dict(os.environ, CLAUDE_PROJECT_DIR=str(project)),
                 text=True,
                 capture_output=True,
                 check=False,
@@ -150,6 +154,8 @@ class GuardTests(unittest.TestCase):
             for tool, tool_input in [
                 ("Read", {"file_path": "secret"}),
                 ("Bash", {"command": "npm test"}),
+                ("Bash", {"command": "rm -rf source-of-truth/"}),
+                ("Bash", {"command": "rm -rf /etc/example"}),
             ]:
                 result = subprocess.run(
                     [sys.executable, str(HERE / "guard_development_permissions.py")],
@@ -172,6 +178,26 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"],
                 "allow",
+            )
+
+            legacy.write_text(
+                "import json\nprint(json.dumps({'hookSpecificOutput': "
+                "{'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', "
+                "'permissionDecisionReason': 'legacy protection'}}))\n"
+            )
+            result = subprocess.run(
+                [sys.executable, str(HERE / "guard_development_permissions.py")],
+                input=json.dumps(
+                    {"tool_name": "Bash", "tool_input": {"command": "rm -rf source-of-truth/"}}
+                ),
+                text=True,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(
+                json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"],
+                "deny" if guard.LEGACY_GUARD_ENABLED else "ask",
             )
 
     def test_invalid_input_fails_closed(self):
