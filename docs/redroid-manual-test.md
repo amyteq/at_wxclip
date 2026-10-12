@@ -7,7 +7,7 @@
 在宿主桌面的终端执行，保持这个终端可用：
 
 ```bash
-cd /home/harry/test/at_wxclip/.claude/worktrees/redroid-pad-spike
+cd /home/harry/test/at_wxclip
 docker ps -a --filter name=redroid-wx-dlh-27 --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
@@ -65,7 +65,7 @@ tar -xzf temp/scrcpy-linux-x86_64-v5.0.1.tar.gz -C temp
 在平板窗口里手动点击微信，等待约 30 秒，观察是否仍保持同一个页面。仅短暂出现欢迎页、`am start` 返回成功、或短暂出现 PID 都不算稳定。若点图标没有反应，可在第二个终端执行：
 
 ```bash
-cd /home/harry/test/at_wxclip/.claude/worktrees/redroid-pad-spike
+cd /home/harry/test/at_wxclip
 adb -s 127.0.0.1:5555 shell am start -W -n com.tencent.mm/.ui.LauncherUI
 adb -s 127.0.0.1:5555 shell pidof com.tencent.mm
 ```
@@ -92,7 +92,7 @@ adb -s 127.0.0.1:5555 shell am force-stop com.tencent.mm
 此节尚未实测。先在独立终端持续运行已有代理，流量只写入本机忽略目录：
 
 ```bash
-cd /home/harry/test/at_wxclip/.claude/worktrees/redroid-pad-spike
+cd /home/harry/test/at_wxclip
 .venv/bin/python -m wx_dlh proxy --host 172.17.0.1 --port 8899 \
   --ca-dir /home/harry/.local/share/wx-dlh/redroid-27/ca \
   --capture-dir temp/redroid-manual-captures > temp/redroid-manual-proxy.log 2>&1
