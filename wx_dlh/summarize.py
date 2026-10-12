@@ -10,16 +10,16 @@ a summary of some noisy text.
 
 **Why this posts JSON itself instead of using the `anthropic` SDK.** The SDK would be the
 normal choice, and it was tried first. It cannot be installed beside mitmproxy: it needs
-`httpx2` -> `httpcore2` -> `h11>=0.16`, and mitmproxy pins `h11` below that, so
-`uv pip install '.[proxy,summarize]'` has no solution. Since `wx-dlh capture` needs
-mitmproxy, taking the SDK would mean `wx-dlh process` could not run in the same virtualenv
-as the command that produces the files it processes - two environments for one tool. The
+`httpx2` -> `httpcore2` -> `h11>=0.16`, and mitmproxy pins `h11` below that, so the two
+have no common solution. mitmproxy is wx-dlh's own dependency (`wx-dlh capture` runs on
+it), so taking the SDK would mean `wx-dlh process` could not run in the same virtualenv as
+the command that produces the files it processes - two environments for one tool. The
 alternative, pinning `anthropic<1`, means writing against a superseded major whose request
 surface for `effort` is not the current one.
 
 So this module does what the rest of the project already does twice over - `keystream.py`
 ports ISAAC64 rather than bridging to Node, `downloader.py` uses `urllib` rather than
-httpx, both to keep the runtime dependency list empty. One POST to a documented endpoint
+httpx, both to keep mitmproxy the only runtime dependency. One POST to a documented endpoint
 is less code than either of those, and it keeps the whole tool installable as one thing.
 If mitmproxy ever loosens that pin, this is about thirty lines to replace with the SDK.
 

@@ -65,7 +65,7 @@ The template below is written for `amyteq/at_wxclip` and reads as a finished com
 | `<agent agreement>` | The file carrying the repository's shared agent conventions and its definition of done | `AGENTS.md` |
 | `<plan of record>` | The document the milestone this work belongs to is tracked against | `docs/development-plan.md` |
 | `<placement guide>` | Where a new artifact belongs in the tree | `docs/directory-guide.md` |
-| `<repository invariants>` | The counter-intuitive facts a change can silently break, spelled out one by one rather than cited | `decode_key` stays an opaque string end to end, a `.part` file holds already-decrypted bytes and resume continues the keystream from that offset, downloading goes direct rather than through the proxy, runtime dependencies stay at zero, and nothing from `downloads/`, `captures/`, `processed/`, or `temp/` is ever staged |
+| `<repository invariants>` | The counter-intuitive facts a change can silently break, spelled out one by one rather than cited | `decode_key` stays an opaque string end to end, a `.part` file holds already-decrypted bytes and resume continues the keystream from that offset, downloading goes direct rather than through the proxy, `mitmproxy` stays the only runtime dependency, and nothing from `downloads/`, `captures/`, `processed/`, or `temp/` is ever staged |
 | `<worktree root>` | Where a run's dedicated branch or worktree lives | `.claude/worktrees/` |
 | `<scratch directory>` | The git-ignored place for a run's working files | `temp/` |
 | `<repository check>` | The one command that must pass before work is reported done | `make lint test` |

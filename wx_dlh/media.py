@@ -1,14 +1,15 @@
 """Talking to ffmpeg and ffprobe.
 
 The post-processing half of wx-dlh (screenshots, text extraction, summary) leans on
-external binaries rather than Python packages, so the runtime dependency list stays empty
-and the heavy lifting is done by tools that are already tuned for it. What this module
+external binaries rather than Python packages, so it adds nothing to the runtime
+dependencies (mitmproxy, for the proxy, is the only one) and the heavy lifting is done by
+tools that are already tuned for it. What this module
 owns is the unglamorous part: finding those binaries, telling the operator which package
 to install when they are missing, and turning `ffprobe` output into something typed.
 
 Every function that shells out takes a `run` callable, defaulting to `subprocess.run`.
 That is the seam the tests use - nothing under `tests/` needs ffmpeg installed, exactly
-as nothing there needs mitmproxy or a network.
+as nothing there needs a network.
 """
 
 from __future__ import annotations
