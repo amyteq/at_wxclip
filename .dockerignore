@@ -1,0 +1,29 @@
+# Allowlist: the image is built from the package and the web assets it serves, nothing
+# else. In particular no .env, no captures, downloads or CA material, no .venv, no .git.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!wx_dlh/
+!web/inject.js
+!web/dashboard.html
+!web/dashboard.js
+!scripts/docker-entrypoint.sh
+# `*` only matches the top level, so `!wx_dlh/` on its own hands the builder every file
+# below it - including the git-ignored output a native run leaves there when a directory
+# setting points at the package tree (`WX_DLH_CAPTURE_DIR=wx_dlh/captures`: JSONL logs,
+# .mitm flow archives, media). Docker takes the last matching pattern, so the tree is
+# excluded again and only the modules come back. The package is pure Python and has no
+# package data - tests/test_docker.py fails if that stops being true.
+wx_dlh/**
+!wx_dlh/*.py
+# After every negation, so no allowlisted tree can re-admit them. Redundant today (the
+# negations above name one file each, plus the package's own modules), kept because the
+# next negation someone adds need not be that narrow.
+**/__pycache__
+**/.env*
+**/*.pem
+**/*.cer
+**/*.crt
+**/*.key
+**/*.p12
