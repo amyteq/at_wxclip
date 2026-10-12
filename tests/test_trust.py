@@ -69,6 +69,19 @@ def cert(tmp_path_factory) -> tuple[Path, str]:
     return pem, loaded.fingerprint(hashes.SHA1()).hex().upper()
 
 
+@pytest.fixture(scope="module")
+def stale(tmp_path_factory) -> str:
+    """A second CA: what a store still holds after `wx-dlh ca` minted a new one."""
+    return ca.ensure_ca(tmp_path_factory.mktemp("stale")).read_text()
+
+
+def _nssdb(db: Path) -> Path:
+    """A NSS database that exists as far as this code looks - nothing here reads it."""
+    db.mkdir(parents=True, exist_ok=True)
+    (db / "cert9.db").touch()
+    return db
+
+
 @pytest.fixture
 def make(tmp_path, cert):
     """Build a Trust for an OS; returns it with its FakeSystem and its captured output."""
@@ -157,16 +170,48 @@ def test_all_means_every_store_once(make):
 def test_running_under_sudo_is_refused(cert):
     with pytest.raises(TrustError, match="without sudo"):
         Trust.for_this_machine(cert[0], os_name="macos", euid=0, env={"SUDO_USER": "me"})
+    # WSL is "windows" - the host's store is the one WeChat reads - but it is POSIX, and
+    # sudo there is sudo: root's HOME would pick the wrong CA and the wrong user stores.
+    with pytest.raises(TrustError, match="without sudo"):
+        Trust.for_this_machine(cert[0], os_name="windows", euid=0, env={"SUDO_USER": "me"})
     # root without sudo (a container) is fine, and needs no sudo in front of anything
     assert Trust.for_this_machine(cert[0], os_name="linux", euid=0, env={}).root
-    # Windows has no sudo; an elevated shell is how LocalMachine is reached
-    Trust.for_this_machine(cert[0], os_name="windows", euid=0, env={"SUDO_USER": "me"})
+    # Windows' own Python has no geteuid (-1); an elevated shell is how LocalMachine is
+    # reached, and it is not sudo
+    assert not Trust.for_this_machine(
+        cert[0], os_name="windows", euid=-1, env={"SUDO_USER": "me"}
+    ).root
 
 
 def test_a_missing_certificate_says_how_to_make_one(make, tmp_path):
     t, system, _ = make("macos")
     t.cert = tmp_path / "nope.pem"
-    with pytest.raises(TrustError, match="wx-dlh ca"):
+    for action in ("install", "list"):  # listing too: a store is searched by fingerprint
+        with pytest.raises(TrustError, match="wx-dlh ca"):
+            t.apply(action, ["keychain"])
+    assert not system.calls
+
+
+def test_the_file_with_the_private_key_in_it_is_refused(make, cert, tmp_path):
+    """`--cert` takes a path, and `mitmproxy-ca.pem` sits next to `mitmproxy-ca-cert.pem`
+    looking just as plausible - but it is the certificate *and* the CA's private key.
+    `--system` installs what it is given as a 0644 trust anchor, so this never gets that
+    far: no store is touched, and the file is not copied anywhere."""
+    t, system, _ = make("linux", anchor_dirs=_anchors(tmp_path))
+    t.cert = ca.key_path(cert[0].parent)
+    assert "PRIVATE KEY" in t.cert.read_text()
+    for action in ("install", "remove", "list"):
+        with pytest.raises(TrustError, match="private key"):
+            t.apply(action, ["system", "user"])
+    assert not system.calls
+    assert not list((tmp_path / "anchors").iterdir())
+
+
+def test_a_certificate_that_is_not_one_is_refused(make, tmp_path):
+    t, system, _ = make("macos")
+    t.cert = tmp_path / "junk.pem"
+    t.cert.write_text("not a certificate\n")
+    with pytest.raises(TrustError, match="BEGIN CERTIFICATE"):
         t.apply("install", ["keychain"])
     assert not system.calls
 
@@ -328,15 +373,70 @@ def test_linux_nss_without_certutil_is_skipped_not_hidden(make):
     assert not system.calls
 
 
-def test_linux_nss_list_shows_our_entries_only(make):
+def test_linux_nss_list_shows_our_entries_only(make, cert):
     t, system, output = make("linux")
+    _nssdb(t.user_db)
+    system.answer("-L -n wx-dlh-ca -a", stdout=cert[0].read_text())
     system.answer(
         "-L",
         stdout="wx-dlh-ca                    C,,\nmitmproxy                    C,,\n",
     )
     assert t.apply("list", ["user"])
     assert "  wx-dlh-ca" in output()
-    assert "mitmproxy" not in output()
+    assert "(this CA)" in output()
+    assert "\n  mitmproxy" not in output()
+
+
+def test_linux_nss_list_tells_our_ca_from_the_one_that_is_in_there(make, stale):
+    """The nickname outlives the certificate: `wx-dlh ca` can mint a new CA while the
+    store still holds the old one under the same name. Only the fingerprint says which."""
+    t, system, output = make("linux")
+    _nssdb(t.user_db)
+    system.answer("-L -n wx-dlh-ca -a", stdout=stale)
+    system.answer("-L", stdout="wx-dlh-ca                    C,,\n")
+    assert t.apply("list", ["user"])
+    assert "another CA, SHA-256 " in output()
+    assert "(this CA)" not in output()
+
+
+def test_linux_nss_does_not_read_a_database_it_cannot_open_as_empty(make):
+    """certutil failing is not "our CA is not in there": a locked, corrupt or
+    password-protected database would otherwise list clean and `--remove` would report
+    an undo that undid nothing, both with exit 0."""
+    t, system, output = make("linux")
+    _nssdb(t.user_db)
+    system.answer("-L", returncode=255, stdout="certutil: SEC_ERROR_BAD_DATABASE")
+    assert not t.apply("list", ["user"])
+    assert not t.apply("remove", ["user"])
+    assert output().count("cannot read") == 2
+    assert not [c for c in system.calls if " -D " in c]
+
+
+def test_linux_nss_remove_takes_out_both_nicknames_and_nothing_else(make):
+    t, system, output = make("linux")
+    db = _nssdb(t.user_db)
+    system.answer("-L", stdout="wxclip-ca    C,,\nwx-dlh-ca    C,,\nmitmproxy    C,,\n")
+    assert t.apply("remove", ["user"])
+    assert f"certutil -d sql:{db} -D -n wx-dlh-ca" in system.calls
+    assert f"certutil -d sql:{db} -D -n wxclip-ca" in system.calls
+    assert not [c for c in system.calls if "-D -n mitmproxy" in c]
+    assert "removed wxclip-ca and wx-dlh-ca" in output()
+
+
+def test_linux_nss_remove_that_did_not_remove_is_not_success(make):
+    t, system, output = make("linux")
+    _nssdb(t.user_db)
+    system.answer("-L", stdout="wx-dlh-ca                    C,,\n")
+    system.answer("-D -n", returncode=255)
+    assert not t.apply("remove", ["user"])
+    assert "nothing to remove" not in output()
+
+
+def test_linux_nss_remove_without_a_database_has_nothing_to_remove(make):
+    t, system, output = make("linux")
+    assert t.apply("remove", ["user"])
+    assert "nothing to remove" in output()
+    assert not system.calls
 
 
 def test_flatpak_persists_pki_so_the_app_can_see_the_database(make):
@@ -400,6 +500,21 @@ def test_linux_system_remove_rebuilds_the_bundle(make, tmp_path):
     assert "[system] removed" in output()
 
 
+def test_linux_system_list_names_the_anchor_it_found_and_whose_it_is(make, cert, stale, tmp_path):
+    """The anchor's path says nothing about which CA is in it, and the pre-rename name is
+    still an install: both files are looked at, and each one by fingerprint."""
+    t, _, output = make("linux", anchor_dirs=_anchors(tmp_path))
+    anchors = tmp_path / "anchors"
+    assert t.apply("list", ["system"])
+    assert f"not installed in {anchors}" in output()
+    (anchors / "wxclip-ca.crt").write_text(stale)
+    (anchors / "wx-dlh-ca.crt").write_text(cert[0].read_text())
+    t, _, output = make("linux", anchor_dirs=_anchors(tmp_path))
+    assert t.apply("list", ["system"])
+    assert f"{anchors / 'wx-dlh-ca.crt'} (this CA)" in output()
+    assert f"{anchors / 'wxclip-ca.crt'} (another CA, SHA-256 " in output()
+
+
 def test_linux_system_without_a_known_layout_says_so(make):
     t, system, output = make("linux")
     assert not t.apply("install", ["system"])
@@ -426,6 +541,14 @@ def test_hint_points_at_the_cert_and_the_subcommand(tmp_path):
 
 def test_hint_on_linux_names_the_flatpak_sandbox(tmp_path):
     assert "com.example.App" in trust.hint(tmp_path, "com.example.App", os_name="linux")
+
+
+def test_hint_does_not_call_a_store_flag_additive(tmp_path):
+    """`--system` selects that store, it does not add it to the defaults - and on Flatpak
+    Linux the defaults are the only stores the app can see. `--all` is the additive one."""
+    out = trust.hint(tmp_path, os_name="linux")
+    assert "--install --system   # that store instead" in out
+    assert "--install --all      # every store above" in out
 
 
 # --- the CLI -------------------------------------------------------------------------
@@ -485,6 +608,14 @@ def test_a_refusal_comes_before_any_ca_is_made(tmp_path, monkeypatch, capsys):
     assert main(["ca", "--install", "--keychain", "--os", "linux", "--ca-dir", str(ca_dir)]) == 1
     assert "--keychain is not a store" in capsys.readouterr().err
     assert not ca_dir.exists()
+
+
+def test_the_cli_refuses_the_combined_key_file_before_it_runs_anything(cert, capsys):
+    """Nothing is monkeypatched here: `--cert mitmproxy-ca.pem` has to be stopped by the
+    real code path, before a single store command is built."""
+    both = ca.key_path(cert[0].parent)
+    assert main(["ca", "--install", "--os", "macos", "--cert", str(both)]) == 1
+    assert "private key" in capsys.readouterr().err
 
 
 def test_a_refusal_is_reported_not_raised(cert, capsys):

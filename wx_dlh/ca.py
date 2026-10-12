@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import ssl
 from pathlib import Path
 
@@ -78,16 +79,41 @@ def ensure_ca(ca_dir: Path) -> Path:
     return cert_path(ca_dir)
 
 
-def fingerprint(pem: Path, algorithm: str = "sha256", *, sep: str = ":") -> str:
-    """The certificate's fingerprint in upper-case hex, or "" when there is none to read.
+#: A `BEGIN ... PRIVATE KEY` line of any flavour: PKCS#8, RSA, EC, ENCRYPTED.
+PRIVATE_KEY_PEM = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+
+
+def cert_der(pem_text: str) -> bytes:
+    """The DER bytes of one PEM certificate; ValueError when the text is not that.
+
+    A text that carries the private key as well is refused rather than filtered down to
+    its certificate: `key_path`'s combined file is exactly such a text, and a trust store
+    handed it would keep the CA's private key in a file of its own - on Linux a
+    world-readable trust anchor. Refusing is the only safe reading of that mistake.
+    """
+    if PRIVATE_KEY_PEM.search(pem_text):
+        raise ValueError(
+            "this holds the CA private key as well as the certificate; "
+            f"pass the certificate-only {CA_BASENAME}-ca-cert.pem"
+        )
+    return ssl.PEM_cert_to_DER_cert(pem_text.strip())
+
+
+def digest(der: bytes, algorithm: str = "sha256", *, sep: str = ":") -> str:
+    """A certificate's fingerprint in upper-case hex.
 
     SHA-256 with colons is how `openssl x509 -fingerprint` prints it; SHA-1 without them is
     how keychains and certutil.exe look a certificate up. Computed here rather than by
     openssl, which a Windows machine does not have.
     """
+    hexed = hashlib.new(algorithm, der, usedforsecurity=False).hexdigest().upper()
+    return sep.join(hexed[i : i + 2] for i in range(0, len(hexed), 2))
+
+
+def fingerprint(pem: Path, algorithm: str = "sha256", *, sep: str = ":") -> str:
+    """`digest` of a certificate file, or "" when there is no certificate to read there."""
     try:
-        der = ssl.PEM_cert_to_DER_cert(Path(pem).read_text().strip())
+        der = cert_der(Path(pem).read_text())
     except (OSError, ValueError):
         return ""
-    digest = hashlib.new(algorithm, der, usedforsecurity=False).hexdigest().upper()
-    return sep.join(digest[i : i + 2] for i in range(0, len(digest), 2))
+    return digest(der, algorithm, sep=sep)

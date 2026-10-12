@@ -32,8 +32,9 @@ WeChat runs on the host, so the distro's own stores are never consulted.
 Only Linux has been carried end to end (`docs/M0-runbook.md`); nobody has yet watched
 WeChat accept the CA on macOS or Windows (#11). So every install is read back from the
 store it wrote to - on Linux every command succeeded long before WeChat accepted anything -
-and stores are searched by SHA-1 fingerprint, never by name: every mitmproxy CA is called
-"mitmproxy", and another tool's copy may sit in the same store.
+and stores are searched by fingerprint, never by name: every mitmproxy CA is called
+"mitmproxy", another tool's copy may sit in the same store, and a nickname outlives the
+certificate under it - `wx-dlh ca` can mint a new CA while the old one keeps the name.
 
 Every command goes through `run` and every tool lookup through `which`. That is the seam
 the tests use, so nothing under `tests/` touches a real trust store.
@@ -41,6 +42,7 @@ the tests use, so nothing under `tests/` touches a real trust store.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -51,7 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from wx_dlh.ca import FLATPAK_APP_ID, cert_path, fingerprint, key_path
+from wx_dlh.ca import FLATPAK_APP_ID, cert_der, cert_path, digest, fingerprint, key_path
 
 NICKNAME = "wx-dlh-ca"
 #: The name before the rename to wx-dlh. The same CA moved over, so an install clears it.
@@ -141,6 +143,9 @@ class Trust:
     which: Callable[[str], str | None] = shutil.which
     out: TextIO = field(default_factory=lambda: sys.stdout)
     err: TextIO = field(default_factory=lambda: sys.stderr)
+    #: The certificate itself, read and checked by `apply` before any store is touched.
+    #: Everything a store is searched or filed by is derived from it, never from `cert`.
+    der: bytes = field(default=b"", init=False, repr=False)
 
     @classmethod
     def for_this_machine(
@@ -157,11 +162,15 @@ class Trust:
         Under sudo, HOME is root's - and on macOS so is the login keychain - so the
         default certificate and the user stores would quietly be the wrong ones. sudo is
         asked for per command instead, and only for `--system`.
+
+        What decides this is `geteuid`, not the OS: Windows has no sudo and no `geteuid`
+        either, so it is let through by the `-1` below. WSL reports `windows` - WeChat
+        runs on the host - but is POSIX underneath, and sudo there is still sudo.
         """
         os_name = os_name or detect_os()
         if euid is None:
             euid = os.geteuid() if hasattr(os, "geteuid") else -1
-        if os_name != "windows" and euid == 0 and env.get("SUDO_USER"):
+        if euid == 0 and env.get("SUDO_USER"):
             raise TrustError(
                 "run this without sudo - it asks for sudo itself, and only for --system"
             )
@@ -232,17 +241,46 @@ class Trust:
 
     # -- doing it -----------------------------------------------------------------------
 
+    def read_cert(self) -> None:
+        """Read the certificate into `der`, refusing anything a store must not be given.
+
+        Every action needs it, listing included: a store is searched by fingerprint, so
+        without the certificate there is nothing to search *for*. `--cert` takes a path,
+        and `mitmproxy-ca.pem` - certificate *and* private key - looks just as plausible
+        as `mitmproxy-ca-cert.pem` next to it. `--system` would install that file as a
+        world-readable trust anchor, key and all, so it is parsed and refused here,
+        before any store is touched.
+        """
+        try:
+            text = self.cert.read_text()
+        except OSError as exc:
+            if not self.cert.is_file():
+                raise TrustError(
+                    f"certificate not found: {self.cert}\ncreate it first:  wx-dlh ca"
+                ) from None
+            raise TrustError(f"cannot read {self.cert}: {exc}") from None
+        try:
+            self.der = cert_der(text)
+        except ValueError as exc:
+            raise TrustError(f"{self.cert}: {exc}") from None
+
+    @property
+    def sha256(self) -> str:
+        """How a certificate is shown to a human, and how two of them are compared here."""
+        return digest(self.der)
+
+    @property
+    def sha1(self) -> str:
+        """How keychains and certutil.exe look a certificate up."""
+        return digest(self.der, "sha1", sep="")
+
     def apply(self, action: str, stores: Sequence[str]) -> bool:
         """Install, remove or list on every store; True when each one of them succeeded."""
         if action not in ACTIONS:
             raise ValueError(f"unknown action: {action}")
-        if action != "list":
-            if not self.cert.is_file():
-                raise TrustError(f"certificate not found: {self.cert}\ncreate it first:  wx-dlh ca")
-            self.say(f"certificate: {self.cert} ({self.os})")
-            sha256 = fingerprint(self.cert)
-            if sha256:
-                self.say(f"  SHA-256: {sha256}")
+        self.read_cert()
+        self.say(f"certificate: {self.cert} ({self.os})")
+        self.say(f"  SHA-256: {self.sha256}")
         ok = True
         for store in stores:
             ok = self._one(store, action) and ok
@@ -274,16 +312,25 @@ class Trust:
         sql = f"sql:{db}"
         if action == "list":
             self.say(f"[{label}] {db}")
-            listed = self._ask([certutil, "-d", sql, "-L"])
-            names = re.compile(rf"^({re.escape(NICKNAME)}|{re.escape(LEGACY_NICKNAME)})\s")
-            ours = [line for line in listed.stdout.splitlines() if names.match(line)]
-            for line in ours if listed.returncode == 0 and ours else ["(not installed)"]:
-                self.say(f"  {line}")
+            ours = self._nss_ours(certutil, sql, db, label)
+            if ours is None:
+                return False
+            for line in ours:
+                self.say(f"  {line}  ({self._nss_holds(certutil, sql, line.split()[0])})")
+            if not ours:
+                self.say("  (not installed)")
             return True
         if action == "remove":
-            self._ask([certutil, "-d", sql, "-D", "-n", LEGACY_NICKNAME])
-            if self._ask([certutil, "-d", sql, "-D", "-n", NICKNAME]).returncode == 0:
-                self.say(f"[{label}] removed from {db}")
+            ours = self._nss_ours(certutil, sql, db, label)
+            if ours is None:
+                return False
+            removed = []
+            for nickname in dict.fromkeys(line.split()[0] for line in ours):
+                if not self._change([certutil, "-d", sql, "-D", "-n", nickname], label):
+                    return False
+                removed.append(nickname)
+            if removed:
+                self.say(f"[{label}] removed {' and '.join(removed)} from {db}")
             else:
                 self.say(f"[{label}] nothing to remove in {db}")
             return True
@@ -302,6 +349,33 @@ class Trust:
             return True
         self.warn(f"[{label}] WARNING: certutil succeeded but {db} does not list it")
         return False
+
+    def _nss_ours(self, certutil: str, sql: str, db: Path, label: str) -> list[str] | None:
+        """The database's entries under our two nicknames; None when it could not be read.
+
+        A database certutil cannot open - locked, corrupt, password-protected - is not a
+        database our CA is absent from. Reading its failure as "not installed" would make
+        `--remove` report an undo that undid nothing, and `--list` call a trusted CA gone.
+        """
+        if not (db / "cert9.db").is_file():
+            return []
+        listed = self._ask([certutil, "-d", sql, "-L"])
+        if listed.returncode != 0:
+            why = " ".join((listed.stderr or listed.stdout).split())
+            self.warn(f"[{label}] cannot read {db}: certutil exited {listed.returncode} {why}")
+            return None
+        names = re.compile(rf"^({re.escape(NICKNAME)}|{re.escape(LEGACY_NICKNAME)})\s")
+        return [line.rstrip() for line in listed.stdout.splitlines() if names.match(line)]
+
+    def _nss_holds(self, certutil: str, sql: str, nickname: str) -> str:
+        """Which certificate sits under `nickname`. The nickname does not say: it stays
+        the same across a `wx-dlh ca` that minted a new CA, and so does `mitmproxy`."""
+        shown = self._ask([certutil, "-d", sql, "-L", "-n", nickname, "-a"])
+        found = ""
+        if shown.returncode == 0:
+            with contextlib.suppress(ValueError):
+                found = digest(cert_der(shown.stdout))
+        return _which_ca(found, self.sha256)
 
     def _flatpak(self, action: str) -> bool:
         label = f"flatpak:{self.app_id}"
@@ -346,9 +420,12 @@ class Trust:
         anchor = directory / f"{NICKNAME}.crt"
         legacy = directory / f"{LEGACY_NICKNAME}.crt"
         if action == "list":
-            if anchor.is_file():
-                self.say(f"[system] {anchor} present")
-            else:
+            # Both names, and the fingerprint of each: the file being there says nothing
+            # about *which* CA is in it, and a pre-rename install is still an install.
+            present = [path for path in (anchor, legacy) if path.is_file()]
+            for path in present:
+                self.say(f"[system] {path} ({_which_ca(fingerprint(path), self.sha256)})")
+            if not present:
                 self.say(f"[system] not installed in {directory}")
             return True
         if action == "remove":
@@ -399,11 +476,8 @@ class Trust:
                 "but security verify-cert does not trust it"
             )
             return False
-        sha1 = self._sha1(store)
-        if sha1 is None:
-            return False
         listed = self._ask([security, "find-certificate", "-a", "-Z", keychain]).stdout
-        present = f"SHA-1 HASH: {sha1}" in listed.upper()
+        present = f"SHA-1 HASH: {self.sha1}" in listed.upper()
         if action == "list":
             self.say(f"[{store}] {'in' if present else 'not in'} {keychain}")
             return True
@@ -411,7 +485,9 @@ class Trust:
         if not present:
             self.say(f"[{store}] nothing to remove in {keychain}")
             return True
-        if not self._change([*prefix, security, "delete-certificate", "-Z", sha1, keychain], store):
+        if not self._change(
+            [*prefix, security, "delete-certificate", "-Z", self.sha1, keychain], store
+        ):
             return False
         self.say(f"[{store}] removed from {keychain}")
         return True
@@ -431,12 +507,9 @@ class Trust:
             scope, where = [], "LocalMachine\\Root"
         else:
             scope, where = ["-user"], "CurrentUser\\Root"
-        sha1 = self._sha1(store)
-        if sha1 is None:
-            return False
 
         def listed() -> bool:
-            return self._ask([exe, *scope, "-store", "Root", sha1]).returncode == 0
+            return self._ask([exe, *scope, "-store", "Root", self.sha1]).returncode == 0
 
         if action == "install":
             if not self._change(
@@ -457,7 +530,7 @@ class Trust:
         if not present:
             self.say(f"[{store}] nothing to remove in {where}")
             return True
-        if not self._change([exe, *scope, "-delstore", "Root", sha1], store):
+        if not self._change([exe, *scope, "-delstore", "Root", self.sha1], store):
             return False
         self.say(f"[{store}] removed from {where}")
         return True
@@ -487,13 +560,6 @@ class Trust:
     @property
     def _sudo(self) -> list[str]:
         return [] if self.root else ["sudo"]
-
-    def _sha1(self, label: str) -> str | None:
-        sha1 = fingerprint(self.cert, "sha1", sep="")
-        if not sha1:
-            self.warn(f"[{label}] no readable certificate at {self.cert} to look for")
-            return None
-        return sha1
 
     def _ask(
         self, argv: list[str], timeout: float | None = None
@@ -549,6 +615,14 @@ def _same_bytes(a: Path, b: Path) -> bool:
         return False
 
 
+def _which_ca(found: str, ours: str) -> str:
+    """How an entry a store already holds is reported: the CA asked about, or another
+    one - a CA from before the last `wx-dlh ca` keeps both the nickname and the path."""
+    if not found:
+        return "could not be read"
+    return "this CA" if found == ours else f"another CA, SHA-256 {found}"
+
+
 def hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID, *, os_name: str | None = None) -> str:
     """What `wx-dlh ca` prints: the CA, and the stores this machine has for it."""
     pem = cert_path(ca_dir)
@@ -571,7 +645,8 @@ def hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID, *, os_name: str | None = No
     lines += [
         "",
         "  wx-dlh ca --install            # the * stores",
-        "  wx-dlh ca --install --system   # the system store as well",
+        "  wx-dlh ca --install --system   # that store instead - a store flag replaces the *",
+        "  wx-dlh ca --install --all      # every store above, --system included",
         "  wx-dlh ca --list               # where it is now",
         "  wx-dlh ca --remove             # undo",
     ]

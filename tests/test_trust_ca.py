@@ -39,17 +39,24 @@ exit 0""",
     "certutil.exe": 'case " $* " in *" -store "*) exit "${STUB_STORE:-0}" ;; esac',
     "cygpath": 'echo "C:\\\\Users\\\\me$(echo "$2" | tr / \\\\\\\\)"',
     "wslpath": 'echo "\\\\\\\\wsl.localhost\\\\Ubuntu$(echo "$2" | tr / \\\\\\\\)"',
-    "certutil": "exit 0",
+    # STUB_NSS_LIST is what `-L` shows, STUB_NSS_PEM the file `-L -n X -a` prints, and
+    # STUB_NSS_L the exit code of both - how a database certutil cannot open behaves.
+    "certutil": """case " $* " in
+  *" -L "*" -a "*) [ -z "${STUB_NSS_PEM:-}" ] || cat "$STUB_NSS_PEM" ;;
+  *" -L "*) [ -z "${STUB_NSS_LIST:-}" ] || printf '%s\\n' "$STUB_NSS_LIST" ;;
+  *) exit 0 ;;
+esac
+exit "${STUB_NSS_L:-0}"
+""",
     "flatpak": 'case "$1" in info) exit 1 ;; esac',
     "update-ca-trust": "",
     "update-ca-certificates": "",
 }
 
 
-@pytest.fixture(scope="module")
-def cert(tmp_path_factory) -> tuple[Path, str]:
-    """A throwaway self-signed CA named like mitmproxy's, plus its SHA-1 as stores show it."""
-    where = tmp_path_factory.mktemp("ca")
+def _make_cert(where: Path) -> tuple[Path, str]:
+    """A throwaway self-signed CA named like mitmproxy's, plus its SHA-1 as stores show
+    it. The private key stays next to it as `key.pem`, as mitmproxy's own CA does."""
     pem = where / "mitmproxy-ca-cert.pem"
     subprocess.run(
         ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
@@ -62,6 +69,17 @@ def cert(tmp_path_factory) -> tuple[Path, str]:
         check=True, capture_output=True, text=True,
     ).stdout  # fmt: skip
     return pem, out.strip().partition("=")[2].replace(":", "")
+
+
+@pytest.fixture(scope="module")
+def cert(tmp_path_factory) -> tuple[Path, str]:
+    return _make_cert(tmp_path_factory.mktemp("ca"))
+
+
+@pytest.fixture(scope="module")
+def stale(tmp_path_factory) -> Path:
+    """A second CA: what a store still holds after `wx-dlh ca` minted a new one."""
+    return _make_cert(tmp_path_factory.mktemp("stale"))[0]
 
 
 @pytest.fixture
@@ -141,6 +159,36 @@ def test_running_the_whole_script_under_sudo_is_refused(run):
     assert code == 1
     assert "without sudo" in out
     assert not [c for c in calls if c.startswith("security add")]
+
+
+def test_sudo_is_refused_under_wsl_too(run):
+    """WSL is "windows" here because WeChat runs on the host, but it is POSIX: sudo there
+    is still sudo, and root's HOME would mean a different CA from the proxy's."""
+    code, out, calls = run(
+        STUB_UNAME="Linux", WSL_DISTRO_NAME="Ubuntu", STUB_UID="0", SUDO_USER="me"
+    )
+    assert code == 1
+    assert "without sudo" in out
+    assert not [c for c in calls if c.startswith("certutil.exe")]
+
+
+def test_an_elevated_git_bash_is_not_sudo(run):
+    """MSYS/Cygwin have no sudo; `id -u` can read 0 in an elevated shell, and that is how
+    LocalMachine is reached. Only the kernel tells the two apart."""
+    code, out, calls = run(STUB_UNAME="MINGW64_NT-10.0", STUB_UID="0", SUDO_USER="me")
+    assert code == 0, out
+    assert [c for c in calls if c.startswith("certutil.exe -user -addstore")]
+
+
+def test_the_file_with_the_private_key_in_it_is_refused(run, tmp_path, cert):
+    """--cert takes a path, and mitmproxy-ca.pem looks as plausible as -ca-cert.pem next
+    to it - but --system installs what it is given as a 0644 trust anchor."""
+    both = tmp_path / "mitmproxy-ca.pem"
+    both.write_text((cert[0].parent / "key.pem").read_text() + cert[0].read_text())
+    code, out, calls = run("--cert", str(both), cert_arg=False, STUB_UNAME="Darwin")
+    assert code == 1
+    assert "private key" in out
+    assert not [c for c in calls if c.startswith("security")]
 
 
 # --- macOS ---------------------------------------------------------------------------
@@ -247,6 +295,43 @@ def test_linux_nss_replaces_the_old_nickname_and_reads_back(run, cert, tmp_path)
     assert f"certutil -d sql:{db} -A -t C,, -n wx-dlh-ca -i {cert[0]}" in calls
     assert f"certutil -d sql:{db} -L -n wx-dlh-ca" in calls
     assert "(read back)" in out
+
+
+def _nssdb(tmp_path: Path) -> Path:
+    """The user database as far as this script looks at it - nothing here reads it."""
+    db = tmp_path / "home" / ".pki" / "nssdb"
+    db.mkdir(parents=True, exist_ok=True)
+    (db / "cert9.db").write_text("")
+    return db
+
+
+def test_linux_nss_list_says_which_ca_sits_under_the_nickname(run, tmp_path, cert, stale):
+    """The nickname outlives the certificate: `wx-dlh ca` can mint a new CA while the
+    store still holds the old one under the same name. Only the fingerprint says which."""
+    _nssdb(tmp_path)
+    listed = "wx-dlh-ca                    C,,"
+    code, out, _ = run(
+        "--list", "--user", "--os", "linux", STUB_NSS_LIST=listed, STUB_NSS_PEM=str(cert[0])
+    )
+    assert code == 0, out
+    assert "wx-dlh-ca" in out
+    assert "(this CA)" in out
+    code, out, _ = run(
+        "--list", "--user", "--os", "linux", STUB_NSS_LIST=listed, STUB_NSS_PEM=str(stale)
+    )
+    assert code == 0, out
+    assert "another CA, SHA-256 " in out
+
+
+def test_a_database_certutil_cannot_open_is_not_an_empty_one(run, tmp_path):
+    """Locked, corrupt, password-protected: reading that as "our CA is not in there"
+    would make --remove report an undo that undid nothing, with exit 0."""
+    _nssdb(tmp_path)
+    for action in ("--list", "--remove"):
+        code, out, calls = run(action, "--user", "--os", "linux", STUB_NSS_L="255")
+        assert code == 1
+        assert "cannot read" in out
+        assert not [c for c in calls if " -D " in c]
 
 
 KNOWN_ANCHORS = {

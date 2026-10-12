@@ -73,8 +73,10 @@ With no target, the stores this OS has are used - never one that needs sudo or a
   --install   put the certificate in (the default)
   --remove    take the certificate back out
   --list      show what is installed where
-  --cert      certificate to use (default: $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem,
-              i.e. ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
+  --cert      certificate to use - the certificate alone, never the mitmproxy-ca.pem
+              beside it that carries the private key as well (default:
+              $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem, i.e.
+              ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
   --os        skip detection; under WSL, --os linux targets the distro's own stores
 
 Do not run it with sudo: it asks for sudo itself, and only for --system.
@@ -111,12 +113,13 @@ is_wsl() {
     || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null
 }
 
+KERNEL="$(uname -s)"
 if [ -z "$OS" ]; then
-  case "$(uname -s)" in
+  case "$KERNEL" in
     Darwin) OS=macos ;;
     MINGW*|MSYS*|CYGWIN*) OS=windows ;;
     Linux) if is_wsl; then OS=windows; else OS=linux; fi ;;
-    *) die "unsupported OS: $(uname -s) - pass --os linux|macos|windows" ;;
+    *) die "unsupported OS: $KERNEL - pass --os linux|macos|windows" ;;
   esac
 fi
 case "$OS" in
@@ -126,11 +129,16 @@ esac
 
 # The whole script under sudo would put root's HOME (and on macOS root's keychain) in
 # play, and the default certificate path with it. Ask for sudo per command instead.
-if [ "$OS" != windows ] && [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+# What decides this is the kernel, not $OS: WSL is "windows" because WeChat runs on the
+# host, but it is POSIX underneath and sudo there is still sudo. Git Bash/MSYS/Cygwin
+# have no sudo at all - an elevated shell is how LocalMachine is reached there.
+case "$KERNEL" in MINGW*|MSYS*|CYGWIN*) POSIX_HOST=no ;; *) POSIX_HOST=yes ;; esac
+if [ "$POSIX_HOST" = yes ] && [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
   die "run this without sudo - it asks for sudo itself, and only for --system"
 fi
 SUDO="sudo"
-[ "$OS" = windows ] || [ "$(id -u)" != 0 ] || SUDO=""  # already root (a container, say)
+[ "$POSIX_HOST" = yes ] || SUDO=""
+[ "$(id -u)" != 0 ] || SUDO=""  # already root (a container, say)
 
 # --- which stores ----------------------------------------------------------------------
 
@@ -171,23 +179,35 @@ else
   esac
 fi
 
-if [ "$ACTION" != "list" ] && [ ! -f "$CERT" ]; then
+# Listing needs the certificate too: a store is searched by fingerprint, so without it
+# there is nothing to search for.
+if [ ! -f "$CERT" ]; then
   echo "certificate not found: $CERT" >&2
   echo "create it first:  wx-dlh ca   (or: python -m wx_dlh ca)" >&2
   exit 1
 fi
 
+# --cert takes a path, and mitmproxy-ca.pem sits next to mitmproxy-ca-cert.pem looking
+# just as plausible - but it is the certificate *and* the CA's private key, and --system
+# installs what it is given as a 0644 trust anchor. Refuse it before any store is touched.
+if grep -q -- "-----BEGIN .*PRIVATE KEY-----" "$CERT"; then
+  die "$CERT holds the CA private key as well as the certificate; pass mitmproxy-ca-cert.pem"
+fi
+grep -q -- "-----BEGIN CERTIFICATE-----" "$CERT" || die "not a PEM certificate: $CERT"
+
 # Stores are searched by fingerprint, not by name: every mitmproxy CA is called
 # "mitmproxy", and another tool's copy may well be sitting in the same store.
 SHA1=""
-if [ -f "$CERT" ] && have openssl; then
+SHA256=""
+if have openssl; then
+  openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
+    || die "openssl cannot read a certificate from $CERT"
   SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
+  SHA256="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//')"
 fi
 
-if [ "$ACTION" != "list" ]; then
-  echo "certificate: $CERT ($OS)"
-  have openssl && openssl x509 -in "$CERT" -noout -subject -fingerprint -sha256 | sed 's/^/  /'
-fi
+echo "certificate: $CERT ($OS)"
+have openssl && openssl x509 -in "$CERT" -noout -subject -fingerprint -sha256 | sed 's/^/  /'
 
 need_sha1() {
   [ -n "$SHA1" ] && return 0
@@ -195,12 +215,36 @@ need_sha1() {
   return 1
 }
 
+# Which certificate a store already holds: the one asked about, or another - a CA from
+# before the last `wx-dlh ca` keeps both the nickname and the file name.
+which_ca() {
+  if [ -z "$1" ]; then echo "could not be read"
+  elif [ "$1" = "$SHA256" ]; then echo "this CA"
+  else echo "another CA, SHA-256 $1"; fi
+}
+
+file_sha256() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'; }
+
 # --- Linux: NSS ------------------------------------------------------------------------
 
 flatpak_db() { echo "$HOME/.var/app/$APP_ID/.pki/nssdb"; }
 
+# The entries under our two nicknames, one per line; non-zero when the database is there
+# but certutil cannot open it. A database it cannot open - locked, corrupt,
+# password-protected - is not a database our CA is absent from, and saying so would make
+# --remove report an undo that undid nothing and --list call a trusted CA gone.
+nss_ours() {
+  local db="$1" label="$2" listed
+  [ -f "$db/cert9.db" ] || return 0
+  if ! listed="$(certutil -d "sql:$db" -L 2>&1)"; then
+    echo "[$label] cannot read $db: certutil failed" >&2
+    return 1
+  fi
+  printf '%s\n' "$listed" | grep -E "^($NICKNAME|$LEGACY_NICKNAME)[[:space:]]" || true
+}
+
 nss_apply() {
-  local db="$1" label="$2"
+  local db="$1" label="$2" ours nick removed
   if ! have certutil; then
     echo "[$label] certutil not found (install nss / libnss3-tools) - skipped" >&2
     return 1
@@ -220,19 +264,39 @@ nss_apply() {
       fi
       ;;
     remove)
-      certutil -d "sql:$db" -D -n "$LEGACY_NICKNAME" >/dev/null 2>&1 || true
-      if certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1; then
-        echo "[$label] removed from $db"
+      ours="$(nss_ours "$db" "$label")" || return 1
+      removed=""
+      for nick in $(printf '%s\n' "$ours" | awk '{print $1}' | sort -u); do
+        certutil -d "sql:$db" -D -n "$nick" || return 1
+        removed="$removed $nick"
+      done
+      if [ -n "$removed" ]; then
+        echo "[$label] removed$removed from $db"
       else
         echo "[$label] nothing to remove in $db"
       fi
       ;;
     list)
+      need_sha1 "$label" || return 1
       echo "[$label] $db"
-      certutil -d "sql:$db" -L 2>/dev/null \
-        | grep -E "^($NICKNAME|$LEGACY_NICKNAME)[[:space:]]" | sed 's/^/  /' || echo "  (not installed)"
+      ours="$(nss_ours "$db" "$label")" || return 1
+      if [ -z "$ours" ]; then
+        echo "  (not installed)"
+      else
+        printf '%s\n' "$ours" | while read -r line; do
+          nick="${line%% *}"
+          echo "  $line  ($(which_ca "$(nss_sha256 "$db" "$nick")"))"
+        done
+      fi
       ;;
   esac
+}
+
+# Which certificate sits under a nickname: the name alone does not say, and it stays the
+# same across a `wx-dlh ca` that minted a new CA.
+nss_sha256() {
+  certutil -d "sql:$1" -L -n "$2" -a 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'
 }
 
 # A Flatpak home only exposes the subpaths its metadata persists, so the database above
@@ -271,7 +335,7 @@ linux_anchor_dir() {
 }
 
 linux_system_apply() {
-  local found dir update anchor legacy
+  local found dir update anchor legacy path shown
   if ! found="$(linux_anchor_dir)"; then
     echo "[system] no supported trust-anchor directory (looked for update-ca-trust and" >&2
     echo "         update-ca-certificates layouts) - install $CERT by hand" >&2
@@ -304,7 +368,16 @@ linux_system_apply() {
       fi
       ;;
     list)
-      if [ -f "$anchor" ]; then echo "[system] $anchor present"; else echo "[system] not installed in $dir"; fi
+      # Both names, and the fingerprint of each: the file being there says nothing about
+      # *which* CA is in it, and a pre-rename install is still an install.
+      need_sha1 system || return 1
+      shown=0
+      for path in "$anchor" "$legacy"; do
+        [ -f "$path" ] || continue
+        shown=1
+        echo "[system] $path ($(which_ca "$(file_sha256 "$path")"))"
+      done
+      [ "$shown" = 1 ] || echo "[system] not installed in $dir"
       ;;
   esac
 }

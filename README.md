@@ -84,7 +84,9 @@ python -m wx_dlh --help
 .venv/bin/python -m wx_dlh ca --install   # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
 ```
 
-`wx-dlh ca --install` 按操作系统挑信任库，没有 CA 时先生成一张；装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。`--list` 查看、`--remove` 撤销。**别用 `sudo` 跑它**：它只在 `--system` 时自己要 sudo，整个命令跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝。
+`wx-dlh ca --install` 按操作系统挑信任库，没有 CA 时先生成一张；装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。`--list` 查看、`--remove` 撤销，两者都按指纹认证书：同名的旧 CA 会被说成「another CA」，不会冒充当前这张。给了 `--flatpak` / `--user` / `--system` 之类的参数就**只**装那几个，不是在默认之上再加一个，要全装用 `--all`。
+
+**别用 `sudo` 跑它**：它只在 `--system` 时自己要 sudo，整个命令跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝（WSL 也一样——它装的是 Windows 宿主机的证书库，但自己是 POSIX，sudo 还是 sudo）。`--cert` 只收**纯证书**的 `mitmproxy-ca-cert.pem`：带私钥的 `mitmproxy-ca.pem` 会被当场拒掉，不然 `--system` 会把 CA 私钥按 0644 装进系统信任锚目录。
 
 `scripts/trust-ca.sh` 是同一套逻辑的 shell 版，参数完全一样（`scripts/trust-ca.sh --install --system` ≡ `wx-dlh ca --install --system`），留给本机没装 wx-dlh 的情况，比如 wx-dlh 跑在 Docker 里、宿主机只需要信任 CA。
 
@@ -189,7 +191,7 @@ wx-dlh extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 
 | 路径       | 说明                                                    |
 |------------|---------------------------------------------------------|
-| `wx_dlh/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server / media / frames / extract / summarize / postprocess |
+| `wx_dlh/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server、CA 与信任库 ca / trust、后处理 media / frames / extract / summarize / postprocess |
 | `web/`     | 注入脚本与前端页面                                       |
 | `docs/`    | 背景、开发计划、规格说明                                 |
 | `tests/`   | pytest 测试                                              |
