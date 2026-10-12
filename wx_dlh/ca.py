@@ -136,14 +136,15 @@ def _parse_x509(der: bytes) -> None:
     The bytes go in wrapped back into a PEM block rather than as bare DER, and the block is
     built here from `der` so that openssl still sees those bytes and nothing else of the
     text they came out of. `cadata` of `bytes` is read as a stream of DER values, and
-    CPython up to 3.11.15 took only ASN1_R_HEADER_TOO_LONG for the end of it; OpenSSL's
-    CVE-2026-34180 hardening (3.0.21, 3.4.6, 3.5.7, 3.6.3, 4.0.1) ends it with
-    ASN1_R_NOT_ENOUGH_DATA instead, so on those pairings every valid certificate came back
-    as no certificate at all and `ca --install/--list/--remove` refused the CA it was
-    pointed at (python/cpython#151504). This project supports 3.11, and its own interpreter
-    is one of those builds. `cadata` of `str` is read as PEM, which ends on PEM's own
-    PEM_R_NO_START_LINE - a reason no OpenSSL release has moved - and what comes back out of
-    `get_ca_certs` is the same either way.
+    CPython 3.11.0 through 3.11.15 took only ASN1_R_HEADER_TOO_LONG for the end of it
+    (3.11.16 and 3.12 end it on BIO_eof); OpenSSL's CVE-2026-34180 hardening (3.0.21,
+    3.4.6, 3.5.7, 3.6.3, 4.0.1) ends it with ASN1_R_NOT_ENOUGH_DATA instead, so on those
+    pairings every valid certificate came back as no certificate at all and
+    `ca --install/--list/--remove` refused the CA it was pointed at (python/cpython#151504).
+    This project supports 3.11, and its own interpreter is a 3.11.15 one: not such a pairing
+    today, one OpenSSL update from being one. `cadata` of `str` is read as PEM, which ends
+    on PEM's own PEM_R_NO_START_LINE - the hardening rewrote the DER reader, not that one -
+    and what comes back out of `get_ca_certs` is the same either way.
 
     What `get_ca_certs` leaves out is what X509_check_ca rejects, so a certificate that is
     no CA comes back as nothing at all - the rule the script spells with `-purpose`.

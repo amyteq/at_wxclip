@@ -212,15 +212,15 @@ def test_what_openssl_keeps_is_kept_here_too(der):
 
 def test_a_certificate_is_taken_where_the_der_reader_takes_nothing(tmp_path, der, monkeypatch):
     """The reading goes in as PEM, and this is why: `cadata` of `bytes` is read as a stream
-    of DER values, and CPython up to 3.11.15 ended that stream only on
+    of DER values, and CPython 3.11.0 through 3.11.15 ended that stream only on
     ASN1_R_HEADER_TOO_LONG, while OpenSSL's CVE-2026-34180 releases end it with
     ASN1_R_NOT_ENOUGH_DATA (python/cpython#151504) - so on those pairings, which this
-    project supports and its own interpreter is one of, a clean CA came back as "no X.509
-    certificate" and `ca --install/--list/--remove` refused the CA they were pointed at.
-    The host's own library says nothing about that, so the test makes any build behave like
-    an affected one: bytes `cadata` raises, and the certificate must still be taken, under
-    the fingerprint the stores are searched by - and the rule must still refuse what openssl
-    would rewrite."""
+    project supports and its own interpreter is one OpenSSL update from, a clean CA came
+    back as "no X.509 certificate" and `ca --install/--list/--remove` refused the CA they
+    were pointed at. The host's own library says nothing about that, so the test makes any
+    build behave like an affected one: bytes `cadata` raises, and the certificate must still
+    be taken, under the fingerprint the stores are searched by - and the rule must still
+    refuse what openssl would rewrite."""
     der_reader = ssl.SSLContext.load_verify_locations
 
     def no_der_stream(self, cafile=None, capath=None, cadata=None):
