@@ -1,5 +1,8 @@
 """CA file naming, creation, fingerprints, and the move from the pre-rename directory."""
 
+import base64
+import ssl
+
 import pytest
 
 from wx_dlh import ca
@@ -41,6 +44,52 @@ def test_no_certificate_means_no_fingerprint(tmp_path):
     assert ca.fingerprint(tmp_path / "missing.pem") == ""
     (tmp_path / "junk.pem").write_text("not a certificate")
     assert ca.fingerprint(tmp_path / "junk.pem") == ""
+
+
+def _block(der: bytes) -> str:
+    """One PEM certificate block around exactly these bytes."""
+    return (
+        "-----BEGIN CERTIFICATE-----\n"
+        f"{base64.encodebytes(der).decode()}"
+        "-----END CERTIFICATE-----\n"
+    )
+
+
+def test_a_length_not_written_the_way_der_requires_is_refused(tmp_path):
+    """OpenSSL reads a padded length happily, but it re-encodes the certificate before it
+    fingerprints it, while `digest` hashes the bytes as they came. Taking one in would mean
+    printing a fingerprint `openssl x509 -fingerprint` does not print and no store will be
+    found by. `scripts/trust-ca.sh` refuses the same file, by comparing openssl's
+    re-encoding with the block byte for byte."""
+    pytest.importorskip("mitmproxy")
+    der = ssl.PEM_cert_to_DER_cert(ca.ensure_ca(tmp_path / "ca").read_text())
+    count = der[1] & 0x7F  # a certificate's length is always in the long form
+    padded = der[:1] + bytes([0x80 | (count + 1)]) + b"\x00" + der[2:]
+    with pytest.raises(ValueError, match="DER requires"):
+        ca.cert_der(_block(padded))
+    rewritten = tmp_path / "padded.pem"
+    rewritten.write_text(_block(padded))
+    assert ca.fingerprint(rewritten) == ""
+
+
+def test_the_short_form_is_the_only_one_where_it_fits():
+    """The other half of the same rule, and the check is the only place it can be shown:
+    no X.509 certificate is under 128 bytes long, so nothing this short ever reaches it
+    through `cert_der` - the parse comes first, and refuses it as no certificate at all."""
+    ca._check_one_der_value(b"\x30\x05" + b"\x00" * 5)  # the short form, as DER wants it
+    for spelling in (b"\x30\x81\x05", b"\x30\x82\x00\x05"):  # long form, padded long form
+        with pytest.raises(ValueError, match="DER requires"):
+            ca._check_one_der_value(spelling + b"\x00" * 5)
+
+
+def test_what_sits_outside_the_block_is_not_part_of_the_certificate(tmp_path):
+    """A trust store is handed the file, not the certificate in it, so bytes after the
+    block ride along unread - a DER private key among them, which the text search for a
+    `BEGIN ... PRIVATE KEY` line cannot see."""
+    pytest.importorskip("mitmproxy")
+    pem = ca.ensure_ca(tmp_path / "ca").read_text()
+    with pytest.raises(ValueError):
+        ca.cert_der(pem + "\x30\x82\x01\x00")
 
 
 def _make_ca(ca_dir, body="pem"):

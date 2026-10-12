@@ -218,6 +218,30 @@ BLOCKS="$(grep -c -- "-----BEGIN CERTIFICATE-----" "$CERT" 2>/dev/null || true)"
 openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
   || die "openssl reads no X.509 certificate in $CERT"
 
+# Parsing is not enough on its own: openssl stops at the end of the first ASN.1 value in
+# the block and never looks at what follows it, while --system copies the file in as it
+# stands, 0644. So what openssl re-encodes has to be every byte the block decodes to.
+# One comparison, two things refused: bytes riding behind the certificate (another
+# certificate, a raw private key - which the text search above cannot see - or padding),
+# and a length DER would not write that way, which openssl silently canonicalises before
+# it prints the fingerprint the stores below are searched by. wx_dlh/ca.py draws the same
+# line in Python, where there is no openssl to re-encode with.
+pem_block_bytes() {
+  sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' "$1" \
+    | sed -e '/-----/d' -e 's/[[:space:]]//g' | openssl enc -base64 -d -A 2>/dev/null
+}
+cmp -s <(openssl x509 -in "$CERT" -outform DER 2>/dev/null) <(pem_block_bytes "$CERT") \
+  || die "$CERT holds more than the certificate between its PEM delimiters, or a length
+DER would not write that way; pass the certificate alone, re-encoding it if need be with:
+openssl x509 -in $CERT -out <new file>"
+# And nothing outside the block either, for the same reason: the file is installed whole,
+# so a DER private key appended after -----END CERTIFICATE----- would ride along unread.
+if sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/d' "$CERT" \
+    | grep -q '[^[:space:]]'; then
+  die "$CERT holds bytes outside its PEM certificate block; pass a file with nothing in it
+but the certificate, e.g.: openssl x509 -in $CERT -out <new file>"
+fi
+
 # Stores are searched by fingerprint, not by name: every mitmproxy CA is called
 # "mitmproxy", and another tool's copy may well be sitting in the same store.
 SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"

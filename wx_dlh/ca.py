@@ -83,19 +83,42 @@ def ensure_ca(ca_dir: Path) -> Path:
 PRIVATE_KEY_PEM = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 
 
-def _one_asn1_value(der: bytes) -> bool:
-    """True when `der` is a single ASN.1 value with nothing after it.
+#: Why a length that is not the shortest one possible is refused rather than read: DER
+#: allows each length exactly one spelling, OpenSSL reads the others anyway but re-encodes
+#: the certificate before it fingerprints it, and `digest` hashes the bytes as they came.
+#: The two would print two fingerprints for one certificate, and a store searched by ours
+#: would not find what `openssl x509 -fingerprint` says is in it.
+NOT_DER = (
+    "the length between the PEM delimiters is not written the way DER requires (the "
+    "shortest form); openssl re-encodes such a certificate before it fingerprints it, so "
+    "the fingerprints would differ. Re-encode it with: openssl x509 -in FILE -out FILE"
+)
+
+
+def _check_one_der_value(der: bytes) -> None:
+    """Raise ValueError unless `der` is one DER value, minimally encoded, and nothing more.
 
     Only the outer tag's length is read; whether what it holds is a certificate is
-    `_parse_x509`'s question, and it is asked first.
+    `_parse_x509`'s question, and it is asked first. `scripts/trust-ca.sh` draws the same
+    line with openssl at hand: there the re-encoding is compared with the decoded block
+    byte for byte, which says the same thing about the outer length and more about what is
+    inside it.
     """
     if len(der) < 2:
-        return False
-    length = der[1]
-    if length & 0x80:  # long form: the low seven bits count the length's own bytes
-        count = length & 0x7F
-        return len(der) == 2 + count + int.from_bytes(der[2 : 2 + count], "big")
-    return len(der) == 2 + length
+        raise ValueError("no certificate between the PEM delimiters")
+    header, size = 2, der[1]
+    if size & 0x80:  # long form: the low seven bits count the length's own bytes
+        count = size & 0x7F
+        if count in (0, 0x7F) or len(der) < 2 + count:  # indefinite, reserved, cut short
+            raise ValueError(NOT_DER)
+        if der[2] == 0:  # a leading zero byte is never the shortest form
+            raise ValueError(NOT_DER)
+        size = int.from_bytes(der[2 : 2 + count], "big")
+        if size < 0x80:  # ... and neither is the long form where the short one fits
+            raise ValueError(NOT_DER)
+        header += count
+    if len(der) != header + size:
+        raise ValueError("more than one certificate between the PEM delimiters; pass one")
 
 
 def _parse_x509(der: bytes) -> None:
@@ -115,8 +138,7 @@ def _parse_x509(der: bytes) -> None:
         ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=der)
     except (ssl.SSLError, ValueError) as exc:  # SSLError is an OSError: it must not escape
         raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
-    if not _one_asn1_value(der):
-        raise ValueError("more than one certificate between the PEM delimiters; pass one")
+    _check_one_der_value(der)
 
 
 def cert_der(pem_text: str) -> bytes:

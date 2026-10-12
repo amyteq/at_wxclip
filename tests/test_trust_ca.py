@@ -8,6 +8,7 @@ only a real client answers (issue #11); nothing here claims it does.
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -237,6 +238,61 @@ def test_what_is_between_the_pem_delimiters_is_parsed_not_just_decoded(
     junk.write_bytes(bundle if content is None else content)
     code, out, calls = run("--cert", str(junk), cert_arg=False, STUB_UNAME="Darwin")
     assert code == 1
+    assert says in out
+    assert not [c for c in calls if c.startswith("security")]
+
+
+def _der(pem: Path) -> bytes:
+    """The certificate's own DER, as openssl re-encodes it."""
+    return subprocess.run(
+        ["openssl", "x509", "-in", str(pem), "-outform", "DER"], check=True, capture_output=True
+    ).stdout
+
+
+def _block(der: bytes) -> bytes:
+    """One PEM certificate block around exactly these bytes."""
+    return (
+        b"-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(der) + b"-----END CERTIFICATE-----\n"
+    )
+
+
+def _behind_the_certificate(der: bytes) -> bytes:
+    """One certificate and then opaque bytes, in one block: `openssl x509` reads the first
+    ASN.1 value and never looks at the rest, so the parse above says nothing about them."""
+    return _block(der + bytes(32))
+
+
+def _padded_length(der: bytes) -> bytes:
+    """The same certificate with a redundant zero byte in its outer length. openssl takes
+    it and canonicalises it, so the fingerprint it prints is of bytes the file does not
+    hold - and that fingerprint is what every store here is searched by."""
+    count = der[1] & 0x7F
+    return _block(der[:1] + bytes([0x80 | (count + 1)]) + b"\x00" + der[2:])
+
+
+def _after_the_block(der: bytes) -> bytes:
+    """A DER private key appended after the block. --system installs the file whole, and
+    the text search for a `BEGIN ... PRIVATE KEY` line cannot see bytes like these."""
+    return _block(der) + b"\x30\x82\x01\x00\x02\x01\x00"
+
+
+@pytest.mark.parametrize(
+    ("build", "says"),
+    [
+        (_behind_the_certificate, "more than the certificate between its PEM delimiters"),
+        (_padded_length, "more than the certificate between its PEM delimiters"),
+        (_after_the_block, "bytes outside its PEM certificate block"),
+    ],
+)  # fmt: skip
+def test_only_the_certificate_may_be_in_the_file(run, tmp_path, cert, build, says):
+    """Each of these parses as one certificate and would be installed as it stands, so the
+    script compares what openssl re-encodes with what the block decodes to, and refuses
+    anything outside the block as well. `wx_dlh/ca.py` holds the same line in Python."""
+    junk = tmp_path / "extra.pem"
+    junk.write_bytes(build(_der(cert[0])))
+    code, out, calls = run("--cert", str(junk), cert_arg=False, STUB_UNAME="Darwin")
+    assert code == 1
+    assert "no X.509 certificate" not in out  # openssl itself is happy with all three
     assert says in out
     assert not [c for c in calls if c.startswith("security")]
 
