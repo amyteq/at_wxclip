@@ -96,3 +96,13 @@
 7. ~~**视频在 xrdp 下能不能播**~~ —— **能播**（2026-09-11 重启 WeChat 后实测）。第一轮播不出来大概率是代理把主进程的 mmtls 长连接（`*.wechat.com`）也拦了，现在这些 host 进了 `DEFAULT_IGNORE_HOSTS`，并且大 body 改为流式转发。纯软件渲染（`--use-gl=angle --use-angle=swiftshader-webgl`）不影响播放。
 8. ~~**媒体是整段文件还是分片**~~ —— **整段文件，已实测跑通**（2026-09-11）。`media[]` 每条给一个 `download_url`（`url` + `url_token`）和 `file_size`，没有 m3u8/m4s 清单；下载字节数与 `file_size` 完全一致，XOR 掉前 128 KiB 后是标准 `ftyp`/`isom` 头，`ffprobe` 认出 h264 1080x2344 + aac 7.48s，`ffmpeg -f null -` 全解零报错。注意一个 `capture` 事件里 `media[]` 有多条（本次每次 8 条），`file_size` 跨度 3.8 MB–585 MB，所以下载要流式 + 进度，不能整块读进内存。
 9. 截屏与文字提取的落地方式（ffmpeg + OCR 引擎）与是否需要本地模型。
+
+## Android 13 平板路线 spike（2026-10-12，登录前受阻）
+
+[#27](https://github.com/amyteq/at_wxclip/issues/27) 验证 Android 平板能否作为 [#26 gateway](https://github.com/amyteq/at_wxclip/issues/26) 的客户端。实测命令、镜像与 APK 校验值见 [#30 的 runbook](https://github.com/amyteq/at_wxclip/issues/30)，owner 亲自复查的步骤见 [Redroid 手动测试清单](redroid-manual-test.md)。owner 已在 [#26 的提议](https://github.com/amyteq/at_wxclip/issues/26#issuecomment-6117208871) 确认设备槽规则：手机、平板、电脑各一台，同类只能同时在线一台；本次尚未通过 Android 登录实测确认设备类别。
+
+- 步骤①：当前 `7.2.4-arch1-2` 的 Rust binder 能启动 redroid Android 13，ABI 包含 `arm64-v8a`。但官方 WeChat 8.0.79 在登录前崩溃，栈涉及 `libndk_translation.so` 与 `libowl.so`；关闭代理仍复现。默认、Lenovo（model 实际被截断）与 SM-X610 参数均未进入登录。官方 Android 13 Google APIs x86_64 AVD revision 17 能启动，但没有 ARM 翻译，APK 安装报 `INSTALL_FAILED_NO_MATCHING_ABIS`；官网 ARM32 兼容包 8.0.42 在独立 redroid data 上也因本地库 ABI 错误不能运行。owner 后续要求的 `budtmo/docker-android:emulator_13.0` / Pixel C 实测同样使用 r17 x86_64 guest，安装 8.0.79 明确报 ABI 不匹配；另观察到 6 GiB 上限下的 OOM 及镜像重启脚本错误，未进入登录。
+- 步骤②：尚未进入，不能据此断言 Android 视频号是否存在 H5 页面或 `WeixinJSBridge`。
+- 步骤③：尚未进入，没有获取 `decode_key`，也没有证明「只有 app hook 才能获取」，因此没有创建 hook 决策 issue。
+
+Android 系统信任库的独立 HTTPS 验证通过；这不等于 WeChat 已接受该 CA。D1：当前实测组合不可用；更广泛的 pad 路线未决。停止在步骤①登录前，后续需要一个能稳定运行原版 WeChat 的 Android 13 / ARM64 环境，再由 owner 扫码验证设备身份与电脑共存。不能把基础 Android 启动或默认 CA 验证通过等同于 gateway 路线可用，也没有由此验证容器化 Linux gateway。
