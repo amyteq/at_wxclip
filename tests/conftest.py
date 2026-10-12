@@ -1,10 +1,10 @@
 """Shared fakes for the post-processing tests.
 
 The point of these is that `make test` needs neither ffmpeg nor tesseract nor a network,
-the same way it already needs neither mitmproxy nor a WeChat client. Every module that
-shells out takes a `run` callable, so a fake that records its calls and answers with
-canned output covers the real logic - which is the parsing, the selection and the
-de-duplication, not the subprocess plumbing.
+the same way it already needs no WeChat client. Every module that shells out takes a `run`
+callable, so a fake that records its calls and answers with canned output covers the real
+logic - which is the parsing, the selection and the de-duplication, not the subprocess
+plumbing.
 """
 
 from __future__ import annotations

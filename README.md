@@ -45,7 +45,7 @@
 
 ## 技术栈
 
-- **Python**：MITM 代理（注入 + 抓取 `decode_key`）、keystream、直连下载、XOR 解密、以及提供管理与下载面板的 web server。运行时**零第三方依赖**（代理那一半用可选的 `mitmproxy`，下载走标准库 `urllib`）
+- **Python**：MITM 代理（注入 + 抓取 `decode_key`）、keystream、直连下载、XOR 解密、以及提供管理与下载面板的 web server。运行时**只有一个第三方依赖** `mitmproxy`（代理与 CA），其余都是标准库：下载走 `urllib`，面板走 `http.server`
 - **JavaScript**：注入到视频号页面里的 hook 脚本 `web/inject.js`
 - **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走 Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见 `docs/project-background.md`
 
@@ -54,6 +54,24 @@
 **keystream 不再需要 Node。** 参考实现把它交给 `decrypt.js`（5.2 MB 的 Emscripten 产物，wasm 以 base64 内嵌，导出 `getDecryptionArray(seedString)`）；M1 把它认出来是标准 ISAAC64，用 `decode_key` 作种子填进结果数组第 0 槽，每个 64 位字按**大端**吐出 131072 字节。`wx_dlh/keystream.py` 就是这个算法的 Python 实现，和 `decrypt.js` 的输出**逐字节一致**——`evals/README.md` 的黄金样本表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。
 
 ## 快速开始
+
+### Python 环境
+
+需要 Python 3.11+。推荐用 [uv](https://docs.astral.sh/uv/) 或 [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html) 管理，它们怎么安装以各自的官方文档为准，这里不重复。
+
+- **uv**：`make setup` 会直接用它建 `.venv`（没有 uv 时回落到 `python3 -m venv` + pip）。
+- **micromamba**：自己建一个 Python ≥ 3.11 的环境并激活，在仓库根目录 `pip install -e '.[dev]'`；之后跑 `make lint test PY=python`（Makefile 默认找 `.venv/bin/python`）。
+
+### 只想用，不改代码
+
+```bash
+pip install wx-dlh                                             # 发布到 PyPI 之后
+pip install "wx-dlh @ git+https://github.com/amyteq/at_wxclip"  # 现在（仓库是私有的，要有访问权限）
+```
+
+一条命令就装齐，`capture` / `proxy` 要用的 mitmproxy 是默认依赖。想装成独立的命令行工具就用 `pipx install wx-dlh` 或 `uv tool install wx-dlh`。注意 pip 装上的只有 `wx-dlh` 命令本身，`scripts/` 下的辅助脚本（信任 CA、Linux 上带代理启动 WeChat）不在包里，要从仓库取。发布流程见 `docs/pypi-publishing.md`。
+
+### 开发
 
 ```bash
 make setup          # 创建 .venv 并安装依赖（uv，回落到 pip；含代理用的 mitmproxy）
@@ -207,3 +225,7 @@ wx-dlh extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 ## 说明
 
 仅用于下载本人 WeChat 客户端中已可正常播放的内容，供个人使用。不做付费/受限内容的 DRM 破解，不做他人账号的批量抓取，不再分发抓取到的媒体文件。
+
+## 许可证
+
+MIT，全文见仓库根目录的 `LICENSE`。

@@ -26,10 +26,12 @@ from wx_dlh.summarize import SummarizeError
 # Subcommands land with their milestones; see docs/development-plan.md.
 PLANNED: dict[str, str] = {}
 
+# mitmproxy is a regular dependency, so this only shows in an environment that skipped it
+# (`pip install --no-deps`, or a checkout whose venv predates the change).
 MISSING_MITMPROXY = (
-    "wx-dlh proxy needs mitmproxy, which is an optional dependency.\n"
-    "  make setup                                   # installs .[dev,proxy]\n"
-    "  uv pip install --python .venv/bin/python -e '.[proxy]'"
+    "wx-dlh proxy needs mitmproxy, which is not installed in this environment.\n"
+    "  pip install --force-reinstall wx-dlh         # installed from PyPI or a wheel\n"
+    "  make setup                                   # in a checkout"
 )
 
 
