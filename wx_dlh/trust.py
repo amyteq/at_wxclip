@@ -84,6 +84,20 @@ MACOS_SYSTEM_KEYCHAIN = "/Library/Keychains/System.keychain"
 #: Where WSL finds certutil.exe when the Windows PATH is not appended to its own.
 WSL_CERTUTIL = "/mnt/c/Windows/System32/certutil.exe"
 
+#: `security` exits with the low byte of its OSStatus, so errSecItemNotFound (-25300)
+#: arrives as 44: the keychain was searched and holds no such certificate. It says as
+#: much in words too, and both are read - neither has been checked against a real
+#: keychain (#11). Any other non-zero status is a keychain that was not searched at all.
+MACOS_NOT_FOUND = -25300 & 0xFF
+MACOS_NOT_FOUND_TEXT = "could not be found in the keychain"
+
+#: certutil's "the store holds no such certificate": CRYPT_E_NOT_FOUND. It exits with
+#: that HRESULT and prints it as well, and both are read, because neither is there in
+#: every setting - a Linux parent under WSL interop sees only the low byte of the status,
+#: while the hex code is in certutil's output on a localized Windows too. Unverified
+#: against a real Windows as well (#11). Anything else is a store it could not search.
+CRYPT_E_NOT_FOUND = 0x80092004
+
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
@@ -349,7 +363,11 @@ class Trust:
             elif not ours:
                 self.say(f"[{label}] nothing to remove in {db}")
             return not unreadable
-        db.mkdir(parents=True, exist_ok=True)
+        try:
+            db.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.warn(f"[{label}] cannot create {db}: {exc}")
+            return False
         if not (db / "cert9.db").is_file() and not self._change(
             [certutil, "-d", sql, "-N", "--empty-password"], label
         ):
@@ -508,8 +526,9 @@ class Trust:
                 "but security verify-cert does not trust it"
             )
             return False
-        listed = self._ask([security, "find-certificate", "-a", "-Z", keychain]).stdout
-        present = f"SHA-1 HASH: {self.sha1}" in listed.upper()
+        present = self._macos_in(security, keychain, store)
+        if present is None:
+            return False
         if action == "list":
             self.say(f"[{store}] {'in' if present else 'not in'} {keychain}")
             return True
@@ -523,6 +542,24 @@ class Trust:
             return False
         self.say(f"[{store}] removed from {keychain}")
         return True
+
+    def _macos_in(self, security: str, keychain: str, store: str) -> bool | None:
+        """Whether the keychain holds this certificate; None when the query itself failed.
+
+        A keychain `security` could not open - a path that is not there, one this user may
+        not read - is not a keychain our CA is absent from, and reading it as one would
+        make `--remove` report an undo that undid nothing and `--list` call a trusted CA
+        gone, both with exit 0. A search that found nothing says so in its own way
+        (`MACOS_NOT_FOUND`), so the two can be told apart; everything else is a failure.
+        """
+        found = self._ask([security, "find-certificate", "-a", "-Z", keychain])
+        if found.returncode == 0:
+            return f"SHA-1 HASH: {self.sha1}" in found.stdout.upper()
+        why = " ".join((found.stderr or found.stdout).split())
+        if found.returncode == MACOS_NOT_FOUND or MACOS_NOT_FOUND_TEXT in why.lower():
+            return False
+        self.warn(f"[{store}] cannot read {keychain}: security exited {found.returncode} {why}")
+        return None
 
     def _login_keychain(self, security: str) -> str:
         listed = self._ask([security, "login-keychain"]).stdout.strip().strip('"')
@@ -540,8 +577,24 @@ class Trust:
         else:
             scope, where = ["-user"], "CurrentUser\\Root"
 
-        def listed() -> bool:
-            return self._ask([exe, *scope, "-store", "Root", self.sha1]).returncode == 0
+        def listed() -> bool | None:
+            """In the store, searched and not in it, or - None - not searched at all.
+
+            A Root store certutil could not search is not a store our CA is absent from:
+            saying so would make `--remove` report an undo that undid nothing and
+            `--list` call a trusted CA gone, both with exit 0. "No such certificate" is
+            `CRYPT_E_NOT_FOUND`, and that one is absence.
+            """
+            found = self._ask([exe, *scope, "-store", "Root", self.sha1])
+            if found.returncode == 0:
+                return True
+            why = " ".join((found.stdout + found.stderr).split())
+            if found.returncode in (CRYPT_E_NOT_FOUND, CRYPT_E_NOT_FOUND - (1 << 32)):
+                return False
+            if f"{CRYPT_E_NOT_FOUND:#010x}" in why.lower() or "CRYPT_E_NOT_FOUND" in why:
+                return False
+            self.warn(f"[{store}] cannot read {where}: certutil exited {found.returncode} {why}")
+            return None
 
         if action == "install":
             if not self._change(
@@ -550,12 +603,18 @@ class Trust:
                 if store == "system":
                     self.warn(f"[{store}] LocalMachine needs a shell started as administrator")
                 return False
-            if listed():
+            back = listed()
+            if back:
                 self.say(f"[{store}] installed in {where} (read back)")
                 return True
-            self.warn(f"[{store}] WARNING: certutil reported success but {where} does not list it")
+            if back is False:  # None has said why already
+                self.warn(
+                    f"[{store}] WARNING: certutil reported success but {where} does not list it"
+                )
             return False
         present = listed()
+        if present is None:
+            return False
         if action == "list":
             self.say(f"[{store}] {'in' if present else 'not in'} {where}")
             return True

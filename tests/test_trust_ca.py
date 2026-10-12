@@ -42,25 +42,54 @@ BARE_TOOLS = ("bash", "grep", "sed", "awk", "sort", "cat", "rm", "mkdir", "cmp",
 STUBS = {
     "uname": 'echo "${STUB_UNAME:-Linux}"',
     "id": 'echo "${STUB_UID:-1000}"',  # the script only asks for -u
-    "sudo": "",  # recorded, never run: nothing here may touch the real system
+    # Recorded, never run: nothing here may touch the real system. STUB_UPDATE is the
+    # exit code of the one command it is asked to run that can fail on its own, the
+    # distro's trust-bundle rebuild.
+    "sudo": 'case " $* " in *" update-ca-"*) exit "${STUB_UPDATE:-0}" ;; esac',
+    # STUB_FIND says what the keychain query does: 0 read, nothing of ours in it; 1 ours
+    # is in it; 44 errSecItemNotFound; anything else a keychain it could not read at all.
+    # The last two messages differ on purpose - only one of them means absence.
     "security": """case "$1" in
   login-keychain) echo '    "/Users/me/Library/Keychains/login.keychain-db"' ;;
   verify-cert) exit "${STUB_VERIFY:-0}" ;;
-  find-certificate) [ "${STUB_FIND:-0}" = 1 ] && echo "SHA-1 hash: $STUB_SHA1" ;;
+  add-trusted-cert) exit "${STUB_ADD:-0}" ;;
+  delete-certificate) exit "${STUB_DELETE:-0}" ;;
+  find-certificate)
+    code="${STUB_FIND:-0}"
+    case "$code" in
+      1) echo "SHA-1 hash: $STUB_SHA1"; code=0 ;;
+      0) ;;
+      44) echo "security: the specified item could not be found in the keychain." >&2 ;;
+      *) echo "security: the specified keychain could not be found." >&2 ;;
+    esac
+    exit "$code" ;;
 esac
 exit 0""",
-    "certutil.exe": 'case " $* " in *" -store "*) exit "${STUB_STORE:-0}" ;; esac',
+    # STUB_STORE is what the search does: 0 the store holds it, 4 the store was searched
+    # and does not - certutil says CRYPT_E_NOT_FOUND, and 4 is the low byte of that
+    # HRESULT, which is all a Linux parent sees - anything else a store it could not
+    # search. STUB_DELSTORE is the deletion's own exit code.
+    "certutil.exe": """case " $* " in
+  *" -store "*)
+    code="${STUB_STORE:-0}"
+    [ "$code" != 4 ] || echo "CertUtil: -store command FAILED: 0x80092004 CRYPT_E_NOT_FOUND"
+    exit "$code" ;;
+  *" -delstore "*) exit "${STUB_DELSTORE:-0}" ;;
+esac""",
     "cygpath": 'echo "C:\\\\Users\\\\me$(echo "$2" | tr / \\\\\\\\)"',
     "wslpath": 'echo "\\\\\\\\wsl.localhost\\\\Ubuntu$(echo "$2" | tr / \\\\\\\\)"',
     # STUB_NSS_LIST is what `-L` shows, STUB_NSS_PEM the file `-L -n X -a` prints
     # (STUB_NSS_PEM_LEGACY for the old nickname, so the two can hold different CAs), and
     # STUB_NSS_L the exit code of both - how a database certutil cannot open behaves.
+    # STUB_NSS_A and STUB_NSS_D are the exit codes of the import and of a deletion.
     "certutil": """case " $* " in
   *" -L "*" -a "*)
     pem="${STUB_NSS_PEM:-}"
     case " $* " in *" -n wxclip-ca "*) pem="${STUB_NSS_PEM_LEGACY:-$pem}" ;; esac
     [ -z "$pem" ] || cat "$pem" ;;
   *" -L "*) [ -z "${STUB_NSS_LIST:-}" ] || printf '%s\\n' "$STUB_NSS_LIST" ;;
+  *" -A "*) exit "${STUB_NSS_A:-0}" ;;
+  *" -D "*) exit "${STUB_NSS_D:-0}" ;;
   *) exit 0 ;;
 esac
 exit "${STUB_NSS_L:-0}"
@@ -381,6 +410,33 @@ def test_macos_remove_with_nothing_there_deletes_nothing(run):
     assert not [c for c in calls if "delete-certificate" in c]
 
 
+def test_macos_a_keychain_that_could_not_be_read_is_not_an_empty_one(run):
+    """A keychain `security` cannot open is not a keychain our CA is absent from: saying
+    so would make --list call a trusted CA gone and --remove report an undo that undid
+    nothing, both with exit 0. The query is captured rather than piped so that its status
+    survives, and "the specified keychain could not be found" is a failure - it is the
+    keychain that is missing, not the certificate."""
+    for action in ("--list", "--remove"):
+        code, out, calls = run(action, STUB_UNAME="Darwin", STUB_FIND="50")
+        assert code == 1
+        assert "cannot read" in out
+        assert "not in /Users/me" not in out
+        assert "nothing to remove" not in out
+        assert not [c for c in calls if "delete-certificate" in c]
+
+
+def test_macos_an_item_that_is_not_there_is_absence_not_a_failure(run):
+    """errSecItemNotFound, which a shell sees as 44: the keychain was read and holds no
+    such certificate. Every --list on a machine without the CA goes this way."""
+    code, out, _ = run("--list", STUB_UNAME="Darwin", STUB_FIND="44")
+    assert code == 0, out
+    assert "not in /Users/me/Library/Keychains/login.keychain-db" in out
+    code, out, calls = run("--remove", STUB_UNAME="Darwin", STUB_FIND="44")
+    assert code == 0, out
+    assert "nothing to remove" in out
+    assert not [c for c in calls if "delete-certificate" in c]
+
+
 # --- Windows / WSL -------------------------------------------------------------------
 
 
@@ -409,7 +465,7 @@ def test_wsl_installs_into_the_host_store_through_wslpath(run, cert):
 
 
 def test_windows_says_so_when_the_store_does_not_list_it_afterwards(run):
-    code, out, _ = run(STUB_UNAME="MINGW64_NT-10.0", STUB_STORE="1")
+    code, out, _ = run(STUB_UNAME="MINGW64_NT-10.0", STUB_STORE="4")
     assert code == 1
     assert "does not list it" in out
 
@@ -418,6 +474,39 @@ def test_windows_remove_deletes_by_fingerprint(run, cert):
     code, out, calls = run("--remove", STUB_UNAME="MINGW64_NT-10.0")
     assert code == 0, out
     assert f"certutil.exe -user -delstore Root {cert[1]}" in calls
+
+
+def test_windows_a_store_that_could_not_be_searched_is_not_an_empty_one(run):
+    """Access denied, a store that will not open: certutil fails without saying
+    CRYPT_E_NOT_FOUND, and that is not "our CA is not in there". Reading it as absence
+    would make --list call a trusted CA gone and --remove report an undo that undid
+    nothing, both with exit 0."""
+    for action in ("--list", "--remove"):
+        code, out, calls = run(action, STUB_UNAME="MINGW64_NT-10.0", STUB_STORE="5")
+        assert code == 1
+        assert "cannot read the Root store" in out
+        assert "not in CurrentUser" not in out
+        assert "nothing to remove" not in out
+        assert not [c for c in calls if "-delstore" in c]
+
+
+def test_windows_crypt_e_not_found_is_absence_not_a_failure(run):
+    """The other half of the same check: a search that ran and found nothing must still
+    read as "not installed", or every --list on a clean machine would be an error."""
+    code, out, calls = run("--list", STUB_UNAME="MINGW64_NT-10.0", STUB_STORE="4")
+    assert code == 0, out
+    assert "not in CurrentUser\\Root" in out
+    code, out, calls = run("--remove", STUB_UNAME="MINGW64_NT-10.0", STUB_STORE="4")
+    assert code == 0, out
+    assert "nothing to remove" in out
+    assert not [c for c in calls if "-delstore" in c]
+
+
+def test_windows_remove_that_did_not_delete_is_not_a_removal(run):
+    code, out, _ = run("--remove", STUB_UNAME="MINGW64_NT-10.0", STUB_DELSTORE="1")
+    assert code == 1
+    assert "removed from" not in out
+    assert "-delstore Root" in out  # the command that failed is named
 
 
 # --- Linux ---------------------------------------------------------------------------
@@ -510,6 +599,13 @@ KNOWN_ANCHORS = {
 }
 
 
+def _anchor_dir_here() -> str | None:
+    """The directory the script would pick on this machine - both update tools are stubs
+    on the PATH these tests build, so the first one that exists is it. Nothing is written
+    there: sudo is a stub that records its arguments and runs nothing."""
+    return next((d for d in KNOWN_ANCHORS if Path(d).is_dir()), None)
+
+
 def test_linux_system_installs_where_this_distro_keeps_anchors(run, cert):
     code, out, calls = run("--system", "--os", "linux")
     present = {d: tool for d, tool in KNOWN_ANCHORS.items() if Path(d).is_dir()}
@@ -527,6 +623,88 @@ def test_linux_system_installs_where_this_distro_keeps_anchors(run, cert):
     # sudo is only recorded here, so the read-back finds nothing - and must say so
     assert code == 1
     assert "does not match" in out
+
+
+# --- a store command that failed -----------------------------------------------------
+#
+# Every apply function in the script is called on the left of `||` in the loop at the
+# end, and that switches `set -e` off inside it: a store command whose result is not
+# looked at falls through to the line that reports success, leaving the store as it was
+# with exit 0. wx_dlh/trust.py checks each of these through `_change`; these are the
+# cases that hold the script to the same answer.
+
+
+def test_nss_install_that_could_not_import_is_not_an_install(run):
+    code, out, _ = run("--install", "--user", "--os", "linux", STUB_NSS_A="1")
+    assert code == 1
+    assert "read back" not in out
+    assert "-A -t C,," in out  # the command that failed is named
+
+
+def test_nss_remove_that_could_not_delete_is_not_a_removal(run, tmp_path, cert):
+    _nssdb(tmp_path)
+    code, out, _ = run(
+        "--remove", "--user", "--os", "linux",
+        STUB_NSS_LIST="wx-dlh-ca     C,,", STUB_NSS_PEM=str(cert[0]), STUB_NSS_D="1",
+    )  # fmt: skip
+    assert code == 1
+    assert "removed" not in out
+    assert "exited 1" in out
+
+
+def test_clearing_an_earlier_install_stays_best_effort(run):
+    """The two deletions before the import only clear a previous install, and there is
+    usually nothing to delete. The port ignores their result as well, so this is parity,
+    not an oversight."""
+    code, out, _ = run("--install", "--user", "--os", "linux", STUB_NSS_D="255")
+    assert code == 0, out
+    assert "(read back)" in out
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into a read-only directory too")
+def test_a_database_directory_that_could_not_be_made_is_not_an_install(run, tmp_path):
+    """certutil is a stub here and reports success whatever it is handed, so without the
+    check this prints "installed ... (read back)" for a database that does not exist."""
+    home = tmp_path / "home"
+    home.chmod(0o500)
+    try:
+        code, out, calls = run("--install", "--user", "--os", "linux")
+    finally:
+        home.chmod(0o700)
+    assert code == 1
+    assert "cannot create" in out
+    assert "read back" not in out
+    assert not [c for c in calls if " -A " in c]
+
+
+def test_macos_install_that_was_not_added_is_not_a_trusted_root(run):
+    """verify-cert is a stub that says yes, as a machine that already trusts another
+    mitmproxy CA would: the read-back cannot stand in for the add's own exit code."""
+    code, out, _ = run("--install", STUB_UNAME="Darwin", STUB_ADD="1")
+    assert code == 1
+    assert "trusted in" not in out
+    assert "add-trusted-cert" in out
+
+
+def test_macos_remove_that_could_not_delete_is_not_a_removal(run):
+    code, out, _ = run("--remove", STUB_UNAME="Darwin", STUB_FIND="1", STUB_DELETE="1")
+    assert code == 1
+    assert "removed from" not in out
+    assert "delete-certificate" in out
+
+
+def test_linux_system_install_that_could_not_rebuild_the_bundle_is_not_an_install(run):
+    """The anchor file alone is not a trust anchor until the distro's tool rebuilds the
+    bundle from it. A failed rebuild leaves a file nothing reads, so it stops there -
+    before the comparison that would otherwise have called it installed."""
+    if not _anchor_dir_here():
+        pytest.skip("no trust-anchor directory on this machine")
+    code, out, calls = run("--system", "--os", "linux", STUB_UPDATE="1")
+    assert code == 1
+    assert "installed as" not in out
+    assert "does not match" not in out  # it stopped at the rebuild, before the read-back
+    assert [c for c in calls if c.startswith("sudo update-ca-")]
+    assert "exited 1" in out
 
 
 def test_the_default_certificate_is_the_one_wx_dlh_ca_creates(run, tmp_path, cert):

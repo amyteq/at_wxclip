@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -329,6 +330,45 @@ def test_macos_list_reports_by_fingerprint(make, cert):
     assert f"[keychain] in {LOGIN_KEYCHAIN}" in output()
 
 
+def test_macos_does_not_read_a_keychain_it_could_not_open_as_an_empty_one(make):
+    """`security` failing is not "our CA is not in there": a keychain that will not open
+    would otherwise list clean and `--remove` would report an undo that undid nothing,
+    both with exit 0. The message here is the one for a *keychain* that is not there,
+    which is a failure - the certificate not being in it reads differently."""
+    t, system, output = make("macos")
+    system.answer(
+        "find-certificate",
+        returncode=50,
+        stdout="security: the specified keychain could not be found.",
+    )
+    assert not t.apply("list", ["keychain"])
+    assert not t.apply("remove", ["keychain"])
+    assert output().count("cannot read") == 2
+    assert "not in" not in output()
+    assert not [c for c in system.calls if "delete-certificate" in c]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        (trust.MACOS_NOT_FOUND, ""),
+        (1, "security: the specified item could not be found in the keychain."),
+    ],
+)
+def test_macos_an_item_that_is_not_there_is_absence_not_a_failure(make, returncode, stdout):
+    """The other half: a keychain that was read and holds no such certificate. Every
+    `--list` on a machine without the CA goes this way, so it must stay exit 0 - the
+    status says so (errSecItemNotFound, truncated to a byte) and so does the message,
+    and both are taken, because neither has been seen on a real keychain (#11)."""
+    t, system, output = make("macos")
+    system.answer("find-certificate", returncode=returncode, stdout=stdout)
+    assert t.apply("list", ["keychain"])
+    assert t.apply("remove", ["keychain"])
+    assert f"[keychain] not in {LOGIN_KEYCHAIN}" in output()
+    assert "nothing to remove" in output()
+    assert not [c for c in system.calls if "delete-certificate" in c]
+
+
 # --- Windows / WSL -------------------------------------------------------------------
 
 
@@ -372,9 +412,13 @@ def test_wsl_installs_into_the_host_store_through_wslpath(make, cert):
     assert f"certutil.exe -user -addstore Root {win}" in system.calls
 
 
+#: What certutil says when the store was searched and holds no such certificate.
+NOT_FOUND = "CertUtil: -store command FAILED: 0x80092004 (-2146885628 CRYPT_E_NOT_FOUND)"
+
+
 def test_windows_says_so_when_the_store_does_not_list_it_afterwards(make):
     t, system, output = make("windows")
-    system.answer("-store Root", returncode=1)
+    system.answer("-store Root", returncode=4, stdout=NOT_FOUND)
     assert not t.apply("install", ["windows"])
     assert "does not list it" in output()
 
@@ -383,6 +427,46 @@ def test_windows_remove_deletes_by_fingerprint(make, cert):
     t, system, _ = make("windows")
     assert t.apply("remove", ["windows"])
     assert f"certutil.exe -user -delstore Root {cert[1]}" in system.calls
+
+
+def test_windows_does_not_read_a_store_it_could_not_search_as_an_empty_one(make):
+    """Access denied, a store that will not open: certutil fails without saying
+    CRYPT_E_NOT_FOUND, and that is not "our CA is not in there". Taking it for absence
+    would make `--list` call a trusted CA gone and `--remove` report an undo that undid
+    nothing, both with exit 0."""
+    t, system, output = make("windows")
+    system.answer("-store Root", returncode=5, stdout="CertUtil: -store command FAILED: 0x5")
+    assert not t.apply("list", ["windows"])
+    assert not t.apply("remove", ["windows"])
+    assert output().count("cannot read") == 2
+    assert "not in" not in output()
+    assert not [c for c in system.calls if "-delstore" in c]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        (4, NOT_FOUND),  # WSL interop: a Linux parent sees the low byte of the HRESULT
+        (trust.CRYPT_E_NOT_FOUND, ""),  # Windows' own Python: the whole status survives
+    ],
+)
+def test_windows_crypt_e_not_found_is_absence_not_a_failure(make, returncode, stdout):
+    """The other half: certutil ran and the store holds no such certificate. Both the
+    status and the printed code are taken, because neither reaches every caller."""
+    t, system, output = make("windows")
+    system.answer("-store Root", returncode=returncode, stdout=stdout)
+    assert t.apply("list", ["windows"])
+    assert t.apply("remove", ["windows"])
+    assert "[windows] not in CurrentUser\\Root" in output()
+    assert "nothing to remove" in output()
+    assert not [c for c in system.calls if "-delstore" in c]
+
+
+def test_windows_remove_that_did_not_delete_is_not_a_removal(make):
+    t, system, output = make("windows")
+    system.answer("-delstore", returncode=5)
+    assert not t.apply("remove", ["windows"])
+    assert "removed from" not in output()
 
 
 def test_windows_without_certutil_says_so(make):
@@ -511,6 +595,20 @@ def test_linux_nss_remove_that_did_not_remove_is_not_success(make, cert):
     assert "nothing to remove" not in output()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into a read-only directory too")
+def test_linux_nss_says_so_when_the_database_directory_cannot_be_made(make):
+    """certutil is recorded, not run, so nothing after this would notice: without the
+    check the commands all "succeed" against a database that was never created."""
+    t, system, output = make("linux")
+    t.home.chmod(0o500)
+    try:
+        assert not t.apply("install", ["user"])
+    finally:
+        t.home.chmod(0o700)
+    assert "cannot create" in output()
+    assert not system.calls
+
+
 def test_linux_nss_remove_without_a_database_has_nothing_to_remove(make):
     t, system, output = make("linux")
     assert t.apply("remove", ["user"])
@@ -578,6 +676,27 @@ def test_linux_system_remove_rebuilds_the_bundle(make, cert, tmp_path):
     assert f"sudo rm -f {anchor}" in system.calls
     assert "sudo update-ca-trust" in system.calls
     assert "[system] removed" in output()
+
+
+def test_linux_system_install_that_could_not_rebuild_the_bundle_is_not_an_install(make, tmp_path):
+    """The anchor file alone is not a trust anchor until the distro's tool rebuilds the
+    bundle from it. The copy here succeeds, so the comparison that reads the anchor back
+    would be happy: only the rebuild's own exit code says the install did not take."""
+    t, system, output = make("linux", anchor_dirs=_anchors(tmp_path))
+    system.answer("install -m 0644", stdout=_really_install)
+    system.answer("update-ca-trust", returncode=1)
+    assert not t.apply("install", ["system"])
+    assert "installed as" not in output()
+    assert "exited 1" in output()
+
+
+def test_linux_system_remove_that_could_not_delete_is_not_a_removal(make, cert, tmp_path):
+    t, system, output = make("linux", anchor_dirs=_anchors(tmp_path))
+    (tmp_path / "anchors" / "wx-dlh-ca.crt").write_text(cert[0].read_text())
+    system.answer("rm -f", returncode=1)
+    assert not t.apply("remove", ["system"])
+    assert "[system] removed" not in output()
+    assert not [c for c in system.calls if c.endswith("update-ca-trust")]
 
 
 def test_linux_system_remove_leaves_another_cas_anchor_where_it_is(make, cert, stale, tmp_path):
@@ -759,3 +878,7 @@ def test_the_script_uses_the_same_names_and_places():
         assert tool in text
     assert trust.MACOS_SYSTEM_KEYCHAIN in text
     assert trust.WSL_CERTUTIL in text
+    # And on which answer from a store means "it is not in there", rather than "the
+    # store could not be read" - the two halves must not disagree about that either.
+    assert trust.MACOS_NOT_FOUND_TEXT in text
+    assert f"{trust.CRYPT_E_NOT_FOUND:#010x}" in text

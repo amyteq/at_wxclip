@@ -285,6 +285,22 @@ which_ca() {
 
 file_sha256() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'; }
 
+# A command that changes a store, run so that its failure cannot be passed over. Every
+# apply function below is called on the left of `||` at the end of this script, and that
+# switches `set -e` off inside it: an unchecked install, rebuild or delete would fall
+# through to the line that reports success, and the store would be left as it was with
+# exit 0. wx_dlh/trust.py puts the same check on the same commands (`_change`), so this
+# is where the two halves agree on which failures count.
+change() {
+  local label="$1" status=0
+  shift
+  "$@" || status=$?
+  if [ "$status" != 0 ]; then
+    echo "[$label] $* exited $status" >&2
+    return 1
+  fi
+}
+
 # --- Linux: NSS ------------------------------------------------------------------------
 
 flatpak_db() { echo "$HOME/.var/app/$APP_ID/.pki/nssdb"; }
@@ -311,11 +327,15 @@ nss_apply() {
   fi
   case "$ACTION" in
     add)
-      mkdir -p "$db"
-      [ -f "$db/cert9.db" ] || certutil -d "sql:$db" -N --empty-password
+      mkdir -p "$db" || { echo "[$label] cannot create $db" >&2; return 1; }
+      if [ ! -f "$db/cert9.db" ]; then
+        change "$label" certutil -d "sql:$db" -N --empty-password || return 1
+      fi
+      # These two only clear a previous install; there is usually nothing to delete, and
+      # the port ignores their result in the same way.
       certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1 || true
       certutil -d "sql:$db" -D -n "$LEGACY_NICKNAME" >/dev/null 2>&1 || true
-      certutil -d "sql:$db" -A -t "C,," -n "$NICKNAME" -i "$CERT"
+      change "$label" certutil -d "sql:$db" -A -t "C,," -n "$NICKNAME" -i "$CERT" || return 1
       if certutil -d "sql:$db" -L -n "$NICKNAME" >/dev/null 2>&1; then
         echo "[$label] installed in $db (read back)"
       else
@@ -337,7 +357,7 @@ nss_apply() {
           [ -n "$found" ] || unreadable=1
           continue
         fi
-        certutil -d "sql:$db" -D -n "$nick" || return 1
+        change "$label" certutil -d "sql:$db" -D -n "$nick" || return 1
         removed="$removed $nick"
       done
       if [ -n "$removed" ]; then
@@ -375,7 +395,7 @@ nss_sha256() {
 flatpak_persist_pki() {
   [ "$ACTION" = "add" ] || return 0
   have flatpak || return 0
-  flatpak override --user "$APP_ID" --persist=.pki
+  change "flatpak:$APP_ID" flatpak override --user "$APP_ID" --persist=.pki || return 1
   echo "[flatpak:$APP_ID] ~/.pki is now persisted into the sandbox"
   if timeout 60 flatpak run --command=sh "$APP_ID" \
       -c '[ -f "$HOME/.pki/nssdb/cert9.db" ]' >/dev/null 2>&1; then
@@ -417,9 +437,13 @@ linux_system_apply() {
   legacy="$dir/$LEGACY_NICKNAME.crt"
   case "$ACTION" in
     add)
-      [ -f "$legacy" ] && $SUDO rm -f "$legacy"
-      $SUDO install -m 0644 "$CERT" "$anchor"
-      $SUDO "$update"
+      if [ -f "$legacy" ]; then
+        change system $SUDO rm -f "$legacy" || return 1
+      fi
+      change system $SUDO install -m 0644 "$CERT" "$anchor" || return 1
+      # The anchor is a file until the bundle is rebuilt from it; a rebuild that failed
+      # leaves a copy nothing reads, and `cmp` below would still call that an install.
+      change system $SUDO "$update" || return 1
       if cmp -s "$CERT" "$anchor"; then
         echo "[system] installed as $anchor ($update)"
       else
@@ -439,7 +463,7 @@ linux_system_apply() {
         shown=1
         sha="$(file_sha256 "$path")"
         if [ "$sha" = "$SHA256" ]; then
-          $SUDO rm -f "$path"
+          change system $SUDO rm -f "$path" || return 1
           removed="$removed $path"
         else
           echo "[system] $path: $(which_ca "$sha") - left alone; take it out with:" \
@@ -448,7 +472,7 @@ linux_system_apply() {
         fi
       done
       if [ -n "$removed" ]; then
-        $SUDO "$update"
+        change system $SUDO "$update" || return 1
         echo "[system] removed$removed"
       elif [ "$shown" = 0 ]; then
         echo "[system] nothing to remove in $dir"
@@ -482,12 +506,28 @@ login_keychain() {
 # a keychain alone does not make a root trusted.
 macos_trusted() { security verify-cert -c "$CERT" >/dev/null 2>&1; }
 
+# Whether the keychain holds this certificate: 0 it does, 1 it does not, 2 the query
+# itself failed. A keychain `security` could not open - a path that is not there, one
+# this user may not read - is not a keychain our CA is absent from, and saying so would
+# make --remove report an undo that undid nothing and --list call a trusted CA gone, both
+# with exit 0. A search that found nothing has a status of its own (errSecItemNotFound,
+# which a shell sees as the low byte of -25300, i.e. 44) and says as much in words; both
+# are read, neither is verified against a real keychain (#11). The listing is captured
+# rather than piped, because a pipe would hide the status it is being told apart by.
+# wx_dlh/trust.py reads the same two signals (`_macos_in`).
 macos_in_keychain() {
-  security find-certificate -a -Z "$1" 2>/dev/null | grep -qi "SHA-1 hash: $SHA1"
+  local kc="$1" label="$2" listed status=0
+  listed="$(security find-certificate -a -Z "$kc" 2>&1)" || status=$?
+  if [ "$status" != 0 ] && [ "$status" != 44 ] \
+     && ! printf '%s\n' "$listed" | grep -qi "could not be found in the keychain"; then
+    echo "[$label] cannot read $kc: security exited $status" >&2
+    return 2
+  fi
+  printf '%s\n' "$listed" | grep -qi "SHA-1 hash: $SHA1"
 }
 
 macos_apply() {
-  local label="$1" kc domain=() run=()
+  local label="$1" kc domain=() run=() found
   if ! have security; then
     echo "[$label] the security tool is missing - is this really macOS?" >&2
     return 1
@@ -502,8 +542,8 @@ macos_apply() {
   case "$ACTION" in
     add)
       # Bash 3.2 (macOS's) treats "${empty[@]}" as unbound under set -u; hence the +.
-      ${run[@]+"${run[@]}"} security add-trusted-cert ${domain[@]+"${domain[@]}"} \
-        -r trustRoot -k "$kc" "$CERT"
+      change "$label" ${run[@]+"${run[@]}"} security add-trusted-cert \
+        ${domain[@]+"${domain[@]}"} -r trustRoot -k "$kc" "$CERT" || return 1
       if macos_trusted; then
         echo "[$label] trusted in $kc (read back with security verify-cert)"
       else
@@ -512,17 +552,26 @@ macos_apply() {
       fi
       ;;
     remove)
+      # Best effort, as in the port: there are no trust settings to take back when the
+      # certificate was only ever in the keychain, and that is not a failure.
       ${run[@]+"${run[@]}"} security remove-trusted-cert ${domain[@]+"${domain[@]}"} "$CERT" \
         >/dev/null 2>&1 || true
-      if macos_in_keychain "$kc"; then
-        ${run[@]+"${run[@]}"} security delete-certificate -Z "$SHA1" "$kc"
+      found=0
+      macos_in_keychain "$kc" "$label" || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then
+        change "$label" ${run[@]+"${run[@]}"} security delete-certificate -Z "$SHA1" "$kc" \
+          || return 1
         echo "[$label] removed from $kc"
       else
         echo "[$label] nothing to remove in $kc"
       fi
       ;;
     list)
-      if macos_in_keychain "$kc"; then echo "[$label] in $kc"; else echo "[$label] not in $kc"; fi
+      found=0
+      macos_in_keychain "$kc" "$label" || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then echo "[$label] in $kc"; else echo "[$label] not in $kc"; fi
       ;;
   esac
 }
@@ -551,8 +600,26 @@ win_path() {
   fi
 }
 
+# Whether the Root store holds this certificate: 0 it does, 1 it does not, 2 the query
+# itself failed - a store that could not be searched is not a store our CA is absent
+# from. certutil says "no such certificate" with CRYPT_E_NOT_FOUND: it exits with that
+# HRESULT and prints it too, and both are read, because neither is there in every
+# setting - a Linux parent under WSL interop sees only the low byte of the status, while
+# the hex code is in the output on a localized Windows as well. Not verified against a
+# real Windows (#11). wx_dlh/trust.py reads the same two signals.
+win_in_store() {
+  local exe="$1" label="$2" listed status=0
+  shift 2  # what is left is the scope, which is empty for LocalMachine - hence the +
+  listed="$("$exe" ${@+"$@"} -store Root "$SHA1" 2>&1)" || status=$?
+  [ "$status" != 0 ] || return 0
+  [ "$status" != 2148081668 ] || return 1   # 0x80092004, where the whole status survives
+  case "$listed" in *0x80092004*|*CRYPT_E_NOT_FOUND*) return 1 ;; esac
+  echo "[$label] cannot read the Root store: certutil exited $status" >&2
+  return 2
+}
+
 windows_apply() {
-  local label="$1" exe scope=() store
+  local label="$1" exe scope=() store found
   if ! exe="$(certutil_exe)"; then
     echo "[$label] certutil.exe not found - run this from Git Bash, MSYS2, Cygwin or WSL" >&2
     return 1
@@ -564,23 +631,30 @@ windows_apply() {
         [ "$label" = system ] && echo "[$label] LocalMachine needs a shell started as administrator" >&2
         return 1
       fi
-      if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
-        echo "[$label] installed in $store (read back)"
-      else
+      found=0
+      win_in_store "$exe" "$label" ${scope[@]+"${scope[@]}"} || found=$?
+      if [ "$found" = 1 ]; then  # 2 has said why already
         echo "[$label] WARNING: certutil reported success but $store does not list it" >&2
-        return 1
       fi
+      [ "$found" = 0 ] || return 1
+      echo "[$label] installed in $store (read back)"
       ;;
     remove)
-      if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
-        "$exe" ${scope[@]+"${scope[@]}"} -delstore Root "$SHA1"
+      found=0
+      win_in_store "$exe" "$label" ${scope[@]+"${scope[@]}"} || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then
+        change "$label" "$exe" ${scope[@]+"${scope[@]}"} -delstore Root "$SHA1" || return 1
         echo "[$label] removed from $store"
       else
         echo "[$label] nothing to remove in $store"
       fi
       ;;
     list)
-      if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
+      found=0
+      win_in_store "$exe" "$label" ${scope[@]+"${scope[@]}"} || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then
         echo "[$label] in $store"
       else
         echo "[$label] not in $store"
