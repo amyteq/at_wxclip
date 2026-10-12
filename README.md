@@ -66,6 +66,16 @@ python -m wx_dlh --help
 scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
 ```
 
+`trust-ca.sh` 按操作系统挑信任库，装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。**别用 `sudo` 跑整个脚本**：它只在 `--system` 时自己要 sudo，整个脚本跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝。
+
+| 系统 | 默认（不要 sudo） | `--system` | 状态 |
+|------|------------------|-----------|------|
+| Linux | Flatpak 沙箱 NSS + `~/.pki/nssdb` | 发行版的信任锚目录：Arch、Fedora/RHEL（`update-ca-trust`）、Debian/Ubuntu、openSUSE（`update-ca-certificates`） | 已实测（M0） |
+| macOS | 登录钥匙串，仅当前用户信任（会弹密码框） | 系统钥匙串，admin 域信任（sudo；参考实现用的就是它） | **未在真实 WeChat 上验证**（#11） |
+| Windows | `CurrentUser\Root`（certutil，会弹确认框） | `LocalMachine\Root`（要「以管理员身份」开的 shell） | **未验证**（#11） |
+
+Windows 上在 Git Bash / MSYS2 / Cygwin 里跑；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。`--list` 查看、`--remove` 撤销，按指纹找证书，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）。
+
 然后一条命令从播放到可播放文件（默认抓到第一个就停，文件落在 `downloads/`）：
 
 ```bash
