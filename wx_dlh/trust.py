@@ -35,6 +35,8 @@ store it wrote to - on Linux every command succeeded long before WeChat accepted
 and stores are searched by fingerprint, never by name: every mitmproxy CA is called
 "mitmproxy", another tool's copy may sit in the same store, and a nickname outlives the
 certificate under it - `wx-dlh ca` can mint a new CA while the old one keeps the name.
+`--remove` goes by that fingerprint too: an entry under our own nickname or path that
+holds some other CA is reported, not deleted - it is a trust anchor nobody asked about.
 
 Every command goes through `run` and every tool lookup through `which`. That is the seam
 the tests use, so nothing under `tests/` touches a real trust store.
@@ -53,7 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from wx_dlh.ca import FLATPAK_APP_ID, cert_der, cert_path, digest, fingerprint, key_path
+from wx_dlh.ca import FLATPAK_APP_ID, cert_der, cert_path, digest, fingerprint, key_path, load_cert
 
 NICKNAME = "wx-dlh-ca"
 #: The name before the rename to wx-dlh. The same CA moved over, so an install clears it.
@@ -249,18 +251,18 @@ class Trust:
         and `mitmproxy-ca.pem` - certificate *and* private key - looks just as plausible
         as `mitmproxy-ca-cert.pem` next to it. `--system` would install that file as a
         world-readable trust anchor, key and all, so it is parsed and refused here,
-        before any store is touched.
+        before any store is touched. So is anything else that is not one certificate,
+        a PEM block wrapping arbitrary bytes included: `install` and `certutil -A` copy
+        the file as it stands, and a trust store is no place to find out it was junk.
         """
         try:
-            text = self.cert.read_text()
+            self.der = load_cert(self.cert)
         except OSError as exc:
             if not self.cert.is_file():
                 raise TrustError(
                     f"certificate not found: {self.cert}\ncreate it first:  wx-dlh ca"
                 ) from None
             raise TrustError(f"cannot read {self.cert}: {exc}") from None
-        try:
-            self.der = cert_der(text)
         except ValueError as exc:
             raise TrustError(f"{self.cert}: {exc}") from None
 
@@ -316,7 +318,8 @@ class Trust:
             if ours is None:
                 return False
             for line in ours:
-                self.say(f"  {line}  ({self._nss_holds(certutil, sql, line.split()[0])})")
+                found = self._nss_sha256(certutil, sql, line.split()[0])
+                self.say(f"  {line}  ({_which_ca(found, self.sha256)})")
             if not ours:
                 self.say("  (not installed)")
             return True
@@ -324,16 +327,27 @@ class Trust:
             ours = self._nss_ours(certutil, sql, db, label)
             if ours is None:
                 return False
-            removed = []
+            removed, unreadable = [], False
             for nickname in dict.fromkeys(line.split()[0] for line in ours):
+                # The nickname is ours; the certificate under it need not be. Deleting
+                # what `--list` would call "another CA" would take out a trust anchor
+                # nobody asked about - a CA from before the last `wx-dlh ca`, say.
+                found = self._nss_sha256(certutil, sql, nickname)
+                if found != self.sha256:
+                    self.warn(
+                        f"[{label}] {nickname} in {db}: {_which_ca(found, self.sha256)}"
+                        f" - left alone; take it out with: certutil -d {sql} -D -n {nickname}"
+                    )
+                    unreadable = unreadable or not found
+                    continue
                 if not self._change([certutil, "-d", sql, "-D", "-n", nickname], label):
                     return False
                 removed.append(nickname)
             if removed:
                 self.say(f"[{label}] removed {' and '.join(removed)} from {db}")
-            else:
+            elif not ours:
                 self.say(f"[{label}] nothing to remove in {db}")
-            return True
+            return not unreadable
         db.mkdir(parents=True, exist_ok=True)
         if not (db / "cert9.db").is_file() and not self._change(
             [certutil, "-d", sql, "-N", "--empty-password"], label
@@ -367,15 +381,15 @@ class Trust:
         names = re.compile(rf"^({re.escape(NICKNAME)}|{re.escape(LEGACY_NICKNAME)})\s")
         return [line.rstrip() for line in listed.stdout.splitlines() if names.match(line)]
 
-    def _nss_holds(self, certutil: str, sql: str, nickname: str) -> str:
-        """Which certificate sits under `nickname`. The nickname does not say: it stays
-        the same across a `wx-dlh ca` that minted a new CA, and so does `mitmproxy`."""
+    def _nss_sha256(self, certutil: str, sql: str, nickname: str) -> str:
+        """The fingerprint of the certificate under `nickname`, "" when it cannot be read.
+        The nickname does not say which certificate that is: it stays the same across a
+        `wx-dlh ca` that minted a new CA, and so does `mitmproxy`."""
         shown = self._ask([certutil, "-d", sql, "-L", "-n", nickname, "-a"])
-        found = ""
         if shown.returncode == 0:
             with contextlib.suppress(ValueError):
-                found = digest(cert_der(shown.stdout))
-        return _which_ca(found, self.sha256)
+                return digest(cert_der(shown.stdout))
+        return ""
 
     def _flatpak(self, action: str) -> bool:
         label = f"flatpak:{self.app_id}"
@@ -429,15 +443,28 @@ class Trust:
                 self.say(f"[system] not installed in {directory}")
             return True
         if action == "remove":
-            if not (anchor.is_file() or legacy.is_file()):
-                self.say(f"[system] nothing to remove in {directory}")
-                return True
+            # The path is ours; the certificate in it need not be. Removing what `--list`
+            # would call "another CA" would take out a trust anchor nobody asked about.
+            found = {path: fingerprint(path) for path in (anchor, legacy) if path.is_file()}
+            ours = [path for path, sha in found.items() if sha == self.sha256]
+            for path, sha in found.items():
+                if path not in ours:
+                    undo = " ".join([*self._sudo, "rm", str(path)])
+                    rebuild = " ".join([*self._sudo, tool])
+                    self.warn(
+                        f"[system] {path}: {_which_ca(sha, self.sha256)}"
+                        f" - left alone; take it out with: {undo} && {rebuild}"
+                    )
+            if not ours:
+                if not found:
+                    self.say(f"[system] nothing to remove in {directory}")
+                return all(found.values())  # an anchor we could not read is not "done"
             if not (
-                self._change([*self._sudo, "rm", "-f", str(anchor), str(legacy)], "system")
+                self._change([*self._sudo, "rm", "-f", *(str(path) for path in ours)], "system")
                 and self._change([*self._sudo, tool], "system")
             ):
                 return False
-            self.say(f"[system] removed {anchor}")
+            self.say(f"[system] removed {' and '.join(str(path) for path in ours)}")
             return True
         if legacy.is_file() and not self._change([*self._sudo, "rm", "-f", str(legacy)], "system"):
             return False

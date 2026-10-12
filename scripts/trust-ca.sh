@@ -35,6 +35,10 @@
 #   windows  CurrentUser\Root (no admin; Windows shows a confirmation dialog)
 #   system   LocalMachine\Root (needs a shell started "as administrator")
 #
+# It needs openssl, which the Python version does not: that is where the certificate is
+# parsed before anything is installed, and where the fingerprint every store is searched
+# by comes from. Rather than install a file it never read, the script stops without it.
+#
 # Only Linux has been carried end to end (docs/M0-runbook.md). The macOS and Windows
 # branches run the commands the reference implementation documents and then check the
 # store they wrote to, but nobody has yet watched WeChat accept the CA on either - see
@@ -78,6 +82,12 @@ With no target, the stores this OS has are used - never one that needs sudo or a
               $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem, i.e.
               ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
   --os        skip detection; under WSL, --os linux targets the distro's own stores
+
+Needs openssl: it reads the certificate with it before any store is touched, and finds
+certificates in a store by fingerprint. `wx-dlh ca` does the same without openssl.
+
+--remove takes out only the certificate given here. An entry under the same nickname or
+file name that holds another CA is reported and left alone.
 
 Do not run it with sudo: it asks for sudo itself, and only for --system.
 USAGE
@@ -126,6 +136,12 @@ case "$OS" in
   linux|macos|windows) ;;
   *) die "--os must be linux, macos or windows, not: $OS" ;;
 esac
+
+# openssl is a requirement, not a nicety: it is what reads the certificate before a store
+# is touched, and what turns it into the fingerprint every store here is searched by.
+# Without it this script would have to hand a file it never parsed to a trust store.
+have openssl || die "openssl not found - this script needs it to read the certificate and
+its fingerprint; install it (openssl / libressl), or use: wx-dlh ca --install"
 
 # The whole script under sudo would put root's HOME (and on macOS root's keychain) in
 # play, and the default certificate path with it. Ask for sudo per command instead.
@@ -193,27 +209,22 @@ fi
 if grep -q -- "-----BEGIN .*PRIVATE KEY-----" "$CERT"; then
   die "$CERT holds the CA private key as well as the certificate; pass mitmproxy-ca-cert.pem"
 fi
-grep -q -- "-----BEGIN CERTIFICATE-----" "$CERT" || die "not a PEM certificate: $CERT"
+# The delimiters say nothing about what is between them - a BEGIN CERTIFICATE block can
+# wrap any bytes at all - and a bundle would have all but its first certificate installed
+# unchecked, so openssl parses the file here, before a store sees it.
+BLOCKS="$(grep -c -- "-----BEGIN CERTIFICATE-----" "$CERT" 2>/dev/null || true)"
+[ "${BLOCKS:-0}" -ge 1 ] || die "not a PEM certificate: $CERT"
+[ "${BLOCKS:-0}" -le 1 ] || die "$CERT holds $BLOCKS certificates; pass the CA's own, alone"
+openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
+  || die "openssl reads no X.509 certificate in $CERT"
 
 # Stores are searched by fingerprint, not by name: every mitmproxy CA is called
 # "mitmproxy", and another tool's copy may well be sitting in the same store.
-SHA1=""
-SHA256=""
-if have openssl; then
-  openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
-    || die "openssl cannot read a certificate from $CERT"
-  SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
-  SHA256="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//')"
-fi
+SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
+SHA256="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//')"
 
 echo "certificate: $CERT ($OS)"
-have openssl && openssl x509 -in "$CERT" -noout -subject -fingerprint -sha256 | sed 's/^/  /'
-
-need_sha1() {
-  [ -n "$SHA1" ] && return 0
-  echo "[$1] needs openssl (to find the certificate by fingerprint) - skipped" >&2
-  return 1
-}
+openssl x509 -in "$CERT" -noout -subject -fingerprint -sha256 | sed 's/^/  /'
 
 # Which certificate a store already holds: the one asked about, or another - a CA from
 # before the last `wx-dlh ca` keeps both the nickname and the file name.
@@ -244,7 +255,7 @@ nss_ours() {
 }
 
 nss_apply() {
-  local db="$1" label="$2" ours nick removed
+  local db="$1" label="$2" ours nick found removed unreadable
   if ! have certutil; then
     echo "[$label] certutil not found (install nss / libnss3-tools) - skipped" >&2
     return 1
@@ -266,18 +277,28 @@ nss_apply() {
     remove)
       ours="$(nss_ours "$db" "$label")" || return 1
       removed=""
+      unreadable=0
       for nick in $(printf '%s\n' "$ours" | awk '{print $1}' | sort -u); do
+        # The nickname is ours; the certificate under it need not be. Deleting what
+        # --list would call "another CA" would take out an anchor nobody asked about.
+        found="$(nss_sha256 "$db" "$nick")"
+        if [ "$found" != "$SHA256" ]; then
+          echo "[$label] $nick in $db: $(which_ca "$found") - left alone; take it out" \
+               "with: certutil -d sql:$db -D -n $nick" >&2
+          [ -n "$found" ] || unreadable=1
+          continue
+        fi
         certutil -d "sql:$db" -D -n "$nick" || return 1
         removed="$removed $nick"
       done
       if [ -n "$removed" ]; then
         echo "[$label] removed$removed from $db"
-      else
+      elif [ -z "$ours" ]; then
         echo "[$label] nothing to remove in $db"
       fi
+      [ "$unreadable" = 0 ] || return 1
       ;;
     list)
-      need_sha1 "$label" || return 1
       echo "[$label] $db"
       ours="$(nss_ours "$db" "$label")" || return 1
       if [ -z "$ours" ]; then
@@ -335,7 +356,7 @@ linux_anchor_dir() {
 }
 
 linux_system_apply() {
-  local found dir update anchor legacy path shown
+  local found dir update anchor legacy path shown sha removed unreadable
   if ! found="$(linux_anchor_dir)"; then
     echo "[system] no supported trust-anchor directory (looked for update-ca-trust and" >&2
     echo "         update-ca-certificates layouts) - install $CERT by hand" >&2
@@ -359,18 +380,35 @@ linux_system_apply() {
       echo "[system] note: a Flatpak app does not see this - it uses the runtime's bundle"
       ;;
     remove)
-      if [ -f "$anchor" ] || [ -f "$legacy" ]; then
-        $SUDO rm -f "$anchor" "$legacy"
+      # The file name is ours; the certificate in it need not be. Removing what --list
+      # would call "another CA" would take out an anchor nobody asked about.
+      removed=""
+      unreadable=0
+      shown=0
+      for path in "$anchor" "$legacy"; do
+        [ -f "$path" ] || continue
+        shown=1
+        sha="$(file_sha256 "$path")"
+        if [ "$sha" = "$SHA256" ]; then
+          $SUDO rm -f "$path"
+          removed="$removed $path"
+        else
+          echo "[system] $path: $(which_ca "$sha") - left alone; take it out with:" \
+               "${SUDO:+$SUDO }rm $path && ${SUDO:+$SUDO }$update" >&2
+          [ -n "$sha" ] || unreadable=1
+        fi
+      done
+      if [ -n "$removed" ]; then
         $SUDO "$update"
-        echo "[system] removed $anchor"
-      else
+        echo "[system] removed$removed"
+      elif [ "$shown" = 0 ]; then
         echo "[system] nothing to remove in $dir"
       fi
+      [ "$unreadable" = 0 ] || return 1
       ;;
     list)
       # Both names, and the fingerprint of each: the file being there says nothing about
       # *which* CA is in it, and a pre-rename install is still an install.
-      need_sha1 system || return 1
       shown=0
       for path in "$anchor" "$legacy"; do
         [ -f "$path" ] || continue
@@ -425,7 +463,6 @@ macos_apply() {
       fi
       ;;
     remove)
-      need_sha1 "$label" || return 1
       ${run[@]+"${run[@]}"} security remove-trusted-cert ${domain[@]+"${domain[@]}"} "$CERT" \
         >/dev/null 2>&1 || true
       if macos_in_keychain "$kc"; then
@@ -436,7 +473,6 @@ macos_apply() {
       fi
       ;;
     list)
-      need_sha1 "$label" || return 1
       if macos_in_keychain "$kc"; then echo "[$label] in $kc"; else echo "[$label] not in $kc"; fi
       ;;
   esac
@@ -479,9 +515,7 @@ windows_apply() {
         [ "$label" = system ] && echo "[$label] LocalMachine needs a shell started as administrator" >&2
         return 1
       fi
-      if [ -z "$SHA1" ]; then
-        echo "[$label] added to $store (no openssl, so not read back)"
-      elif "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
+      if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
         echo "[$label] installed in $store (read back)"
       else
         echo "[$label] WARNING: certutil reported success but $store does not list it" >&2
@@ -489,7 +523,6 @@ windows_apply() {
       fi
       ;;
     remove)
-      need_sha1 "$label" || return 1
       if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
         "$exe" ${scope[@]+"${scope[@]}"} -delstore Root "$SHA1"
         echo "[$label] removed from $store"
@@ -498,7 +531,6 @@ windows_apply() {
       fi
       ;;
     list)
-      need_sha1 "$label" || return 1
       if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
         echo "[$label] in $store"
       else

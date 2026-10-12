@@ -18,11 +18,23 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "trust-ca.sh"
 #: Point this at another bash (macOS ships 3.2) to check the script still parses there.
 BASH = os.environ.get("TRUST_CA_BASH", "bash")
+#: Resolved here, because a test can hand the script a PATH without openssl on it.
+BASH_EXE = shutil.which(BASH)
 
+#: openssl is the script's own requirement, not just this suite's: it reads the
+#: certificate with it before any store is touched. Without it there is nothing to test -
+#: `test_the_script_stops_when_openssl_is_missing` is what covers that case.
 pytestmark = pytest.mark.skipif(
-    shutil.which("openssl") is None or shutil.which(BASH) is None,
-    reason="needs bash and openssl",
+    shutil.which("openssl") is None or BASH_EXE is None,
+    reason="needs bash and openssl, which the script itself requires",
 )
+
+#: PEM delimiters around base64 that is not a certificate: `b"abc"`, in fact.
+WRAPPED_JUNK = b"-----BEGIN CERTIFICATE-----\nYWJj\n-----END CERTIFICATE-----\n"
+
+#: Enough of a PATH for the script to reach its openssl check without finding openssl.
+#: `bash` is on it because the stubs below start with `#!/usr/bin/env bash`.
+BARE_TOOLS = ("bash", "grep", "sed", "awk", "sort", "cat", "rm", "mkdir", "cmp", "install")
 
 # Each stub appends "<name> <args>" to $STUB_LOG; behaviour that a test needs to vary
 # comes from STUB_* variables so one set of stubs serves every case.
@@ -39,10 +51,14 @@ exit 0""",
     "certutil.exe": 'case " $* " in *" -store "*) exit "${STUB_STORE:-0}" ;; esac',
     "cygpath": 'echo "C:\\\\Users\\\\me$(echo "$2" | tr / \\\\\\\\)"',
     "wslpath": 'echo "\\\\\\\\wsl.localhost\\\\Ubuntu$(echo "$2" | tr / \\\\\\\\)"',
-    # STUB_NSS_LIST is what `-L` shows, STUB_NSS_PEM the file `-L -n X -a` prints, and
+    # STUB_NSS_LIST is what `-L` shows, STUB_NSS_PEM the file `-L -n X -a` prints
+    # (STUB_NSS_PEM_LEGACY for the old nickname, so the two can hold different CAs), and
     # STUB_NSS_L the exit code of both - how a database certutil cannot open behaves.
     "certutil": """case " $* " in
-  *" -L "*" -a "*) [ -z "${STUB_NSS_PEM:-}" ] || cat "$STUB_NSS_PEM" ;;
+  *" -L "*" -a "*)
+    pem="${STUB_NSS_PEM:-}"
+    case " $* " in *" -n wxclip-ca "*) pem="${STUB_NSS_PEM_LEGACY:-$pem}" ;; esac
+    [ -z "$pem" ] || cat "$pem" ;;
   *" -L "*) [ -z "${STUB_NSS_LIST:-}" ] || printf '%s\\n' "$STUB_NSS_LIST" ;;
   *) exit 0 ;;
 esac
@@ -93,21 +109,32 @@ def run(tmp_path, cert):
     home = tmp_path / "home"
     home.mkdir()
     log = tmp_path / "calls.log"
+    bare = tmp_path / "bare"  # the PATH a machine without openssl on it has
+    bare.mkdir()
+    for name in BARE_TOOLS:
+        found = shutil.which(name)
+        if found:
+            (bare / name).symlink_to(found)
 
     def invoke(
-        *args: str, cert_arg: bool = True, hide: tuple[str, ...] = (), **env: str
+        *args: str,
+        cert_arg: bool = True,
+        hide: tuple[str, ...] = (),
+        openssl: bool = True,
+        **env: str,
     ) -> tuple[int, str, list[str]]:
         for name in hide:
             (stubs / name).unlink(missing_ok=True)
         log.write_text("")
+        path = os.environ["PATH"] if openssl else str(bare)
         full_env = {
-            "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+            "PATH": f"{stubs}{os.pathsep}{path}",
             "HOME": str(home),
             "STUB_LOG": str(log),
             "STUB_SHA1": cert[1],
             **env,
         }
-        argv = [BASH, str(SCRIPT), *args]
+        argv = [BASH_EXE, str(SCRIPT), *args]
         if cert_arg:
             argv += ["--cert", str(cert[0])]
         done = subprocess.run(argv, env=full_env, capture_output=True, text=True, timeout=60)
@@ -188,6 +215,40 @@ def test_the_file_with_the_private_key_in_it_is_refused(run, tmp_path, cert):
     code, out, calls = run("--cert", str(both), cert_arg=False, STUB_UNAME="Darwin")
     assert code == 1
     assert "private key" in out
+    assert not [c for c in calls if c.startswith("security")]
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "says"),
+    [
+        ("wrapped.pem", WRAPPED_JUNK, "no X.509"),
+        ("bundle.pem", None, "2 certificates"),
+        ("binary.cer", bytes(range(256)), "not a PEM certificate"),
+    ],
+)  # fmt: skip
+def test_what_is_between_the_pem_delimiters_is_parsed_not_just_decoded(
+    run, tmp_path, cert, stale, name, content, says
+):
+    """The delimiters prove nothing - a BEGIN CERTIFICATE block can wrap any bytes at all -
+    and the store commands copy the file as it stands, so openssl reads it first. A bundle
+    goes the same way: only its first certificate would ever be looked at."""
+    junk = tmp_path / name
+    bundle = cert[0].read_bytes() + stale.read_bytes()  # two certificates in one file
+    junk.write_bytes(bundle if content is None else content)
+    code, out, calls = run("--cert", str(junk), cert_arg=False, STUB_UNAME="Darwin")
+    assert code == 1
+    assert says in out
+    assert not [c for c in calls if c.startswith("security")]
+
+
+def test_the_script_stops_when_openssl_is_missing(run, tmp_path):
+    """openssl is what reads the certificate before a store is touched and what every
+    store is searched by here, so the script says so instead of installing a file it
+    never parsed. (`wx-dlh ca` needs no openssl at all - that is the way out.)"""
+    code, out, calls = run("--install", openssl=False, STUB_UNAME="Darwin")
+    assert code == 1
+    assert "openssl not found" in out
+    assert "wx-dlh ca" in out
     assert not [c for c in calls if c.startswith("security")]
 
 
@@ -321,6 +382,38 @@ def test_linux_nss_list_says_which_ca_sits_under_the_nickname(run, tmp_path, cer
     )
     assert code == 0, out
     assert "another CA, SHA-256 " in out
+
+
+def test_linux_nss_remove_leaves_another_cas_certificate_where_it_is(run, tmp_path, cert, stale):
+    """The nickname is ours, the certificate under it need not be: `wx-dlh ca` can mint a
+    new CA while the store still holds the old one under the same name. `--list` calls
+    that entry "another CA", so `--remove` must not delete it - it is a trust anchor
+    nobody asked about. Only the one the fingerprint matches goes."""
+    db = _nssdb(tmp_path)
+    code, out, calls = run(
+        "--remove", "--user", "--os", "linux",
+        STUB_NSS_LIST="wxclip-ca     C,,\nwx-dlh-ca     C,,",
+        STUB_NSS_PEM=str(cert[0]), STUB_NSS_PEM_LEGACY=str(stale),
+    )  # fmt: skip
+    assert code == 0, out
+    assert f"certutil -d sql:{db} -D -n wx-dlh-ca" in calls
+    assert not [c for c in calls if "-D -n wxclip-ca" in c]
+    assert "another CA, SHA-256 " in out
+    assert "left alone" in out
+    assert "removed wx-dlh-ca" in out
+
+
+def test_linux_nss_remove_does_not_delete_an_entry_it_could_not_read(run, tmp_path):
+    """Unreadable is not "someone else's" either: it might be ours. It stays, and the
+    script says it did not finish rather than reporting an undo that undid nothing."""
+    _nssdb(tmp_path)
+    code, out, calls = run(
+        "--remove", "--user", "--os", "linux", STUB_NSS_LIST="wx-dlh-ca     C,,"
+    )  # no STUB_NSS_PEM: `certutil -L -n ... -a` prints nothing to fingerprint
+    assert code == 1
+    assert not [c for c in calls if " -D " in c]
+    assert "could not be read" in out
+    assert "nothing to remove" not in out
 
 
 def test_a_database_certutil_cannot_open_is_not_an_empty_one(run, tmp_path):

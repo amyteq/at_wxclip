@@ -44,7 +44,7 @@ M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视�
 .venv/bin/python -m wx_dlh ca --remove   # 撤销
 ```
 
-CA 默认在 `~/.config/wx-dlh/ca/`（**不在仓库里**，因为带私钥）。没装 wx-dlh 的机器上，`scripts/trust-ca.sh` 接受同样的参数。`WX_DLH_CA_DIR` 可以改。装完要**重启 WeChat**，证书库是启动时读的。
+CA 默认在 `~/.config/wx-dlh/ca/`（**不在仓库里**，因为带私钥）。没装 wx-dlh 的机器上，`scripts/trust-ca.sh` 接受同样的参数（那台机器要有 openssl，脚本靠它读证书和算指纹）。`WX_DLH_CA_DIR` 可以改。装完要**重启 WeChat**，证书库是启动时读的。
 
 如果之后发现 WeChat 仍然不认这张证书，按这个顺序试：
 

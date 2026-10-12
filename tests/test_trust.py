@@ -216,6 +216,30 @@ def test_a_certificate_that_is_not_one_is_refused(make, tmp_path):
     assert not system.calls
 
 
+@pytest.mark.parametrize(
+    ("name", "content", "says"),
+    [
+        ("wrapped.pem", b"-----BEGIN CERTIFICATE-----\nYWJj\n-----END CERTIFICATE-----\n", "X.509"),
+        ("der.cer", bytes(range(256)), "not PEM text"),
+        ("empty.pem", b"", "BEGIN CERTIFICATE"),
+    ],
+)
+def test_what_is_between_the_pem_delimiters_is_parsed_not_just_decoded(
+    make, tmp_path, name, content, says
+):
+    """The delimiters prove nothing: a BEGIN CERTIFICATE block can wrap any bytes at all,
+    and `install`/`certutil -A` copy the file as it stands - so `--system` would file junk
+    as a trust anchor and only the distro's update tool would ever notice. Bytes that are
+    not text at all come the same way, and must be a refusal, not a UnicodeDecodeError."""
+    t, system, _ = make("linux", anchor_dirs=_anchors(tmp_path))
+    t.cert = tmp_path / name
+    t.cert.write_bytes(content)
+    with pytest.raises(TrustError, match=says):
+        t.apply("install", ["system", "user"])
+    assert not system.calls
+    assert not list((tmp_path / "anchors").iterdir())
+
+
 # --- macOS ---------------------------------------------------------------------------
 
 
@@ -412,9 +436,10 @@ def test_linux_nss_does_not_read_a_database_it_cannot_open_as_empty(make):
     assert not [c for c in system.calls if " -D " in c]
 
 
-def test_linux_nss_remove_takes_out_both_nicknames_and_nothing_else(make):
+def test_linux_nss_remove_takes_out_both_nicknames_and_nothing_else(make, cert):
     t, system, output = make("linux")
     db = _nssdb(t.user_db)
+    system.answer("-L -n", stdout=cert[0].read_text())  # both nicknames hold this CA
     system.answer("-L", stdout="wxclip-ca    C,,\nwx-dlh-ca    C,,\nmitmproxy    C,,\n")
     assert t.apply("remove", ["user"])
     assert f"certutil -d sql:{db} -D -n wx-dlh-ca" in system.calls
@@ -423,9 +448,41 @@ def test_linux_nss_remove_takes_out_both_nicknames_and_nothing_else(make):
     assert "removed wxclip-ca and wx-dlh-ca" in output()
 
 
-def test_linux_nss_remove_that_did_not_remove_is_not_success(make):
+def test_linux_nss_remove_leaves_another_cas_certificate_where_it_is(make, cert, stale):
+    """The nickname is ours, the certificate under it need not be: `wx-dlh ca` can mint a
+    new CA while the store still holds the old one under the same name. `--list` says
+    "another CA" about that entry, so `--remove` must not delete it - it is a trust
+    anchor nobody asked about. Only the one the fingerprint matches goes."""
+    t, system, output = make("linux")
+    db = _nssdb(t.user_db)
+    system.answer("-L -n wxclip-ca -a", stdout=stale)
+    system.answer("-L -n wx-dlh-ca -a", stdout=cert[0].read_text())
+    system.answer("-L", stdout="wxclip-ca    C,,\nwx-dlh-ca    C,,\n")
+    assert t.apply("remove", ["user"])
+    assert f"certutil -d sql:{db} -D -n wx-dlh-ca" in system.calls
+    assert not [c for c in system.calls if "-D -n wxclip-ca" in c]
+    assert "another CA, SHA-256 " in output()
+    assert "left alone" in output()
+    assert "removed wx-dlh-ca" in output()
+
+
+def test_linux_nss_remove_does_not_delete_an_entry_it_could_not_read(make):
+    """Unreadable is not "someone else's" either: it might be ours. It stays, and the
+    command says it did not finish rather than reporting an undo that undid nothing."""
     t, system, output = make("linux")
     _nssdb(t.user_db)
+    system.answer("-L -n", returncode=255)
+    system.answer("-L", stdout="wx-dlh-ca    C,,\n")
+    assert not t.apply("remove", ["user"])
+    assert not [c for c in system.calls if " -D " in c]
+    assert "could not be read" in output()
+    assert "nothing to remove" not in output()
+
+
+def test_linux_nss_remove_that_did_not_remove_is_not_success(make, cert):
+    t, system, output = make("linux")
+    _nssdb(t.user_db)
+    system.answer("-L -n", stdout=cert[0].read_text())
     system.answer("-L", stdout="wx-dlh-ca                    C,,\n")
     system.answer("-D -n", returncode=255)
     assert not t.apply("remove", ["user"])
@@ -491,13 +548,35 @@ def test_linux_system_clears_the_old_name_first(make, tmp_path):
     assert f"sudo rm -f {legacy}" in system.calls
 
 
-def test_linux_system_remove_rebuilds_the_bundle(make, tmp_path):
+def test_linux_system_remove_rebuilds_the_bundle(make, cert, tmp_path):
     t, system, output = make("linux", anchor_dirs=_anchors(tmp_path))
-    (tmp_path / "anchors" / "wx-dlh-ca.crt").write_text("x")
+    anchor = tmp_path / "anchors" / "wx-dlh-ca.crt"
+    anchor.write_text(cert[0].read_text())
     assert t.apply("remove", ["system"])
-    assert system.ran("sudo rm -f ")
+    assert f"sudo rm -f {anchor}" in system.calls
     assert "sudo update-ca-trust" in system.calls
     assert "[system] removed" in output()
+
+
+def test_linux_system_remove_leaves_another_cas_anchor_where_it_is(make, cert, stale, tmp_path):
+    """The file name is ours, the certificate in it need not be - `--list` says as much.
+    Removing it anyway would take out a trust anchor nobody asked about, so the one that
+    matches goes and the other is reported; an anchor that cannot be read stays too."""
+    anchors = _anchors(tmp_path)
+    (tmp_path / "anchors" / "wxclip-ca.crt").write_text(stale)
+    (tmp_path / "anchors" / "wx-dlh-ca.crt").write_text(cert[0].read_text())
+    t, system, output = make("linux", anchor_dirs=anchors)
+    assert t.apply("remove", ["system"])
+    assert f"sudo rm -f {tmp_path / 'anchors' / 'wx-dlh-ca.crt'}" in system.calls
+    assert "wxclip-ca.crt" not in " ".join(system.ran("sudo rm"))
+    assert "another CA, SHA-256 " in output()
+    assert "left alone; take it out with: sudo rm " in output()
+    (tmp_path / "anchors" / "wx-dlh-ca.crt").write_text("not a certificate\n")
+    t, system, output = make("linux", anchor_dirs=anchors)
+    assert not t.apply("remove", ["system"])  # could not be read: it might be ours
+    assert not system.ran("sudo rm")
+    assert "could not be read" in output()
+    assert "nothing to remove" not in output()
 
 
 def test_linux_system_list_names_the_anchor_it_found_and_whose_it_is(make, cert, stale, tmp_path):

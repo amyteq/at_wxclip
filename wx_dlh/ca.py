@@ -90,13 +90,39 @@ def cert_der(pem_text: str) -> bytes:
     its certificate: `key_path`'s combined file is exactly such a text, and a trust store
     handed it would keep the CA's private key in a file of its own - on Linux a
     world-readable trust anchor. Refusing is the only safe reading of that mistake.
+
+    What the delimiters hold is parsed, not merely base64-decoded: a `BEGIN CERTIFICATE`
+    block can wrap any bytes at all, and `trust` files what it is given as a trust anchor.
+    The parser is `cryptography`'s, which mitmproxy requires and `mitmproxy.certs` builds
+    this very CA with - so it is already installed, and nothing new is depended on.
     """
     if PRIVATE_KEY_PEM.search(pem_text):
         raise ValueError(
             "this holds the CA private key as well as the certificate; "
             f"pass the certificate-only {CA_BASENAME}-ca-cert.pem"
         )
-    return ssl.PEM_cert_to_DER_cert(pem_text.strip())
+    der = ssl.PEM_cert_to_DER_cert(pem_text.strip())
+    from cryptography.x509 import load_der_x509_certificate  # as in `ensure_ca`: not cheap
+
+    try:
+        load_der_x509_certificate(der)
+    except ValueError as exc:
+        raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
+    return der
+
+
+def load_cert(pem: Path) -> bytes:
+    """`cert_der` of a file: OSError when it cannot be read, ValueError when what is in
+    it is not one certificate - bytes that are not even text among them (a DER `.cer`,
+    say), which `read_text` would raise a `UnicodeDecodeError` over."""
+    raw = Path(pem).read_bytes()
+    try:
+        text = raw.decode()
+    except UnicodeDecodeError:
+        raise ValueError(
+            f"this is not PEM text; pass the {CA_BASENAME}-ca-cert.pem a CA directory holds"
+        ) from None
+    return cert_der(text)
 
 
 def digest(der: bytes, algorithm: str = "sha256", *, sep: str = ":") -> str:
@@ -113,7 +139,7 @@ def digest(der: bytes, algorithm: str = "sha256", *, sep: str = ":") -> str:
 def fingerprint(pem: Path, algorithm: str = "sha256", *, sep: str = ":") -> str:
     """`digest` of a certificate file, or "" when there is no certificate to read there."""
     try:
-        der = cert_der(Path(pem).read_text())
+        der = load_cert(pem)
     except (OSError, ValueError):
         return ""
     return digest(der, algorithm, sep=sep)

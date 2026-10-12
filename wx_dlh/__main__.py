@@ -247,8 +247,10 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
             "be) and reads every store back afterwards; --list shows where it is; --remove "
             "takes it out. Without a store flag, --install uses this OS's stores that need "
             "neither sudo nor an administrator. Do not run it under sudo: it asks for sudo "
-            "itself, and only for --system. scripts/trust-ca.sh does the same on a machine "
-            "without wx-dlh installed."
+            "itself, and only for --system. --list and --remove go by the certificate's "
+            "fingerprint: an entry under our own name that holds another CA is reported, "
+            "not removed. scripts/trust-ca.sh does the same on a machine without wx-dlh "
+            "installed, where it needs openssl."
         ),
     )
     ca_cmd.add_argument("--ca-dir", type=Path, default=defaults.ca_dir, help="CA directory")

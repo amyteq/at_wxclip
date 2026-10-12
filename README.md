@@ -84,11 +84,11 @@ python -m wx_dlh --help
 .venv/bin/python -m wx_dlh ca --install   # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
 ```
 
-`wx-dlh ca --install` 按操作系统挑信任库，没有 CA 时先生成一张；装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。`--list` 查看、`--remove` 撤销，两者都按指纹认证书：同名的旧 CA 会被说成「another CA」，不会冒充当前这张。给了 `--flatpak` / `--user` / `--system` 之类的参数就**只**装那几个，不是在默认之上再加一个，要全装用 `--all`。
+`wx-dlh ca --install` 按操作系统挑信任库，没有 CA 时先生成一张；装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。`--list` 查看、`--remove` 撤销，两者都按指纹认证书：同名的旧 CA 会被说成「another CA」，不会冒充当前这张，`--remove` 也只删指纹对得上的那一张——同名（或同文件名）但属于别的 CA 的那张只报告、不删，读不出来的也不删，并且退出码非 0。`--cert` 给的文件会先被解析成一张 X.509 证书才会进信任库：带私钥的、PEM 壳里装着别的东西的、一个文件里塞了好几张的，都在碰信任库之前就拒掉。给了 `--flatpak` / `--user` / `--system` 之类的参数就**只**装那几个，不是在默认之上再加一个，要全装用 `--all`。
 
 **别用 `sudo` 跑它**：它只在 `--system` 时自己要 sudo，整个命令跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝（WSL 也一样——它装的是 Windows 宿主机的证书库，但自己是 POSIX，sudo 还是 sudo）。`--cert` 只收**纯证书**的 `mitmproxy-ca-cert.pem`：带私钥的 `mitmproxy-ca.pem` 会被当场拒掉，不然 `--system` 会把 CA 私钥按 0644 装进系统信任锚目录。
 
-`scripts/trust-ca.sh` 是同一套逻辑的 shell 版，参数完全一样（`scripts/trust-ca.sh --install --system` ≡ `wx-dlh ca --install --system`），留给本机没装 wx-dlh 的情况，比如 wx-dlh 跑在 Docker 里、宿主机只需要信任 CA。
+`scripts/trust-ca.sh` 是同一套逻辑的 shell 版，参数完全一样（`scripts/trust-ca.sh --install --system` ≡ `wx-dlh ca --install --system`），留给本机没装 wx-dlh 的情况，比如 wx-dlh 跑在 Docker 里、宿主机只需要信任 CA。**它要有 openssl**：证书先用 openssl 解析过才会进信任库，查库、删库也都按它算出来的指纹；没有 openssl 就直接报错退出，不会把一个没读过的文件装进信任库。`wx-dlh ca` 不需要 openssl。
 
 | 系统 | 默认（不要 sudo） | `--system` | 状态 |
 |------|------------------|-----------|------|
@@ -96,7 +96,7 @@ python -m wx_dlh --help
 | macOS | 登录钥匙串，仅当前用户信任（会弹密码框） | 系统钥匙串，admin 域信任（sudo；参考实现用的就是它） | **未在真实 WeChat 上验证**（#11） |
 | Windows | `CurrentUser\Root`（certutil，会弹确认框） | `LocalMachine\Root`（要「以管理员身份」开的 shell） | **未验证**（#11） |
 
-Windows 上用 Windows 自己的 Python 跑就行，不需要 Git Bash（shell 版才要 Git Bash / MSYS2 / Cygwin）；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。查找证书按指纹，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）；指纹由 Python 自己算，不需要 openssl。
+Windows 上用 Windows 自己的 Python 跑就行，不需要 Git Bash（shell 版才要 Git Bash / MSYS2 / Cygwin）；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。查找证书按指纹，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）；指纹由 Python 自己算，不需要 openssl（shell 版要）。
 
 然后一条命令从播放到可播放文件（默认抓到第一个就停，文件落在 `downloads/`）：
 
