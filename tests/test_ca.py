@@ -113,6 +113,29 @@ def test_the_lengths_openssl_rewrites_are_the_ones_refused(tbs, alg, sig, refuse
         ca._check_one_der_value(der)
 
 
+def test_an_indefinite_tbs_is_measured_rather_than_judged():
+    """BER lets a constructed value count nothing and end at an end-of-contents marker
+    instead, and openssl keeps tbsCertificate however it is spelled - so the only question
+    asked there is where it stops. The nesting has to be counted to answer it: the first
+    marker closes the value that opened last, not the tbs. What follows the tbs is held to
+    DER as ever, which is what says the walk stopped in the right place."""
+    inner = b"\xa0\x80" + b"\x02\x01\x02" + b"\x00\x00"  # version, under an indefinite tag
+    tbs = b"\x30\x80" + inner + b"\x00\x00"
+
+    def wrapped(body: bytes) -> bytes:  # the certificate SEQUENCE around the three values
+        return b"\x30" + bytes([len(body)]) + body
+
+    ca._check_one_der_value(wrapped(tbs + b"\x30\x00" + b"\x03\x00"))
+    with pytest.raises(ValueError, match="DER requires"):  # the padded length after the tbs
+        ca._check_one_der_value(wrapped(tbs + b"\x30\x81\x00" + b"\x03\x00"))
+    for body in (  # and openssl reads no certificate in either of these
+        tbs[:-2] + b"\x30\x00" + b"\x03\x00",  # the marker closing the tbs is missing
+        b"\x30\x80\x05\x80\x00\x00\x00\x00" + b"\x30\x00" + b"\x03\x00",  # primitive: no marker
+    ):
+        with pytest.raises(ValueError):
+            ca._check_one_der_value(wrapped(body))
+
+
 def _length(size: int, pad: int = 0) -> bytes:
     """How DER writes `size`, with `pad` zero bytes in front of it that nobody needs."""
     if size < 0x80 and not pad:
@@ -126,10 +149,13 @@ def _seq(body: bytes, pad: int = 0) -> bytes:
     return b"\x30" + _length(len(body), pad) + body
 
 
-def _padded(value: bytes) -> bytes:
-    """One DER value with a zero byte added to its length: the same value, spelled the one
-    way DER does not allow. Every tag a certificate uses is a single byte."""
+def _respell(value: bytes, how: str) -> bytes:
+    """The same value with its length written a way DER does not allow: a zero byte of
+    padding in front of it, or the indefinite form, which counts nothing and is closed by
+    an end-of-contents marker instead. Every tag a certificate uses is a single byte."""
     content, finish = ca._der_value(value, 0, len(value))
+    if how == "indefinite":  # only a constructed value can be closed by a marker
+        return value[:1] + b"\x80" + value[content:finish] + b"\x00\x00"
     return value[:1] + _length(finish - content, 1) + value[content:finish]
 
 
@@ -141,15 +167,28 @@ def _openssl(der: bytes, *args: str) -> subprocess.CompletedProcess:
 
 @pytest.mark.skipif(shutil.which("openssl") is None, reason="the comparison is with openssl")
 @pytest.mark.parametrize(
-    "where", ["outer", "tbsCertificate", "signatureAlgorithm", "signatureValue"]
+    ("where", "how"),
+    [
+        ("outer", "padded"),
+        ("outer", "indefinite"),
+        ("tbsCertificate", "padded"),
+        ("tbsCertificate", "indefinite"),
+        ("inside tbsCertificate", "padded"),
+        ("inside tbsCertificate", "indefinite"),
+        ("signatureAlgorithm", "padded"),
+        ("signatureAlgorithm", "indefinite"),
+        ("signatureValue", "padded"),  # primitive: no marker would close it
+    ],
 )  # fmt: skip
-def test_a_padded_length_is_taken_exactly_where_openssl_keeps_it(tmp_path, where):
+def test_a_length_is_taken_exactly_where_openssl_keeps_it(tmp_path, where, how):
     """The rule is openssl's, and this is the comparison that says so: a certificate is
     taken exactly when `openssl x509 -outform DER` writes the same bytes back, and then
     `digest` prints the fingerprint openssl prints. `scripts/trust-ca.sh` makes that very
     comparison, so the port's two halves accept and fingerprint the same files. Which
-    position lands on which side is openssl's business, not this test's - it only asks
-    that the two agree."""
+    position and which spelling land on which side is openssl's business, not this test's -
+    it only asks that the two agree. The indefinite form is not DER at all, and openssl
+    keeps it exactly where it keeps a padded one: in `tbsCertificate`, which it never
+    re-encodes."""
     pytest.importorskip("mitmproxy")
     der = ssl.PEM_cert_to_DER_cert(ca.ensure_ca(tmp_path / "ca").read_text())
     content, end = ca._der_value(der, 0, len(der))
@@ -160,15 +199,17 @@ def test_a_padded_length_is_taken_exactly_where_openssl_keeps_it(tmp_path, where
         at = finish
     tbs, alg, sig = parts
     if where == "outer":
-        variant = _seq(tbs + alg + sig, 1)
-    elif where == "tbsCertificate":  # on the first value inside it, under the kept encoding
+        variant = _respell(_seq(tbs + alg + sig), how)
+    elif where == "tbsCertificate":  # on the value openssl hands back as it read it
+        variant = _seq(_respell(tbs, how) + alg + sig)
+    elif where == "inside tbsCertificate":  # on the first value in it, under that same encoding
         inside, stop = ca._der_value(tbs, 0, len(tbs))
         _, first_end = ca._der_value(tbs, inside, stop)
-        variant = _seq(_seq(_padded(tbs[inside:first_end]) + tbs[first_end:stop]) + alg + sig)
+        variant = _seq(_seq(_respell(tbs[inside:first_end], how) + tbs[first_end:stop]) + alg + sig)
     elif where == "signatureAlgorithm":
-        variant = _seq(tbs + _padded(alg) + sig)
+        variant = _seq(tbs + _respell(alg, how) + sig)
     else:
-        variant = _seq(tbs + alg + _padded(sig))
+        variant = _seq(tbs + alg + _respell(sig, how))
 
     written = _openssl(variant, "-outform", "DER")
     if written.returncode == 0 and written.stdout == variant:  # openssl keeps these bytes

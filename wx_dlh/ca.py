@@ -100,11 +100,17 @@ NOT_DER = (
 CUT_SHORT = "the certificate between the PEM delimiters stops in the middle"
 
 
-def _der_value(der: bytes, start: int, end: int, *, minimal: bool = True) -> tuple[int, int]:
-    """Where the value at `start` keeps its content, and where that content ends.
+def _der_header(
+    der: bytes, start: int, end: int, *, minimal: bool = True
+) -> tuple[int, int | None]:
+    """Where the value at `start` keeps its content, and how many bytes of it follow -
+    None when the length is the indefinite form, which counts nothing and runs to an
+    end-of-contents marker instead.
 
     ValueError when the header reaches past `end`, or - unless `minimal` says not to ask -
-    when its length is spelled any way but the shortest, the only one DER allows.
+    when its length is spelled any way but the shortest, the only one DER allows. The
+    indefinite form is one of those other ways, and only a constructed value may carry it:
+    a primitive one holds no marker to close it, and openssl parses no such length either.
     """
     if start >= end:
         raise ValueError(CUT_SHORT)
@@ -117,18 +123,62 @@ def _der_value(der: bytes, start: int, end: int, *, minimal: bool = True) -> tup
         raise ValueError(CUT_SHORT)
     size = der[at]
     at += 1
-    if size & 0x80:  # long form: the low seven bits count the length's own bytes
-        count = size & 0x7F
-        if count in (0, 0x7F) or at + count > end:  # indefinite, reserved, cut short
+    if not size & 0x80:  # short form: the byte is the length
+        return at, size
+    count = size & 0x7F  # long form: the low seven bits count the length's own bytes
+    if count == 0:  # indefinite: the marker ends it, and only for a constructed value
+        if minimal or not der[start] & 0x20:
             raise ValueError(NOT_DER)
-        leading_zero = der[at] == 0  # never the shortest form, whatever follows it
-        size = int.from_bytes(der[at : at + count], "big")
-        if minimal and (leading_zero or size < 0x80):  # ... nor the long form where short fits
-            raise ValueError(NOT_DER)
-        at += count
-    if at + size > end:
+        return at, None
+    if count == 0x7F or at + count > end:  # reserved, cut short
+        raise ValueError(NOT_DER)
+    leading_zero = der[at] == 0  # never the shortest form, whatever follows it
+    size = int.from_bytes(der[at : at + count], "big")
+    if minimal and (leading_zero or size < 0x80):  # ... nor the long form where short fits
+        raise ValueError(NOT_DER)
+    return at + count, size
+
+
+def _der_value(der: bytes, start: int, end: int) -> tuple[int, int]:
+    """Where the value at `start` keeps its content, and where that content ends.
+
+    ValueError when the header or the content reaches past `end`, or when its length is
+    spelled any way but the shortest, the only one DER allows.
+    """
+    content, size = _der_header(der, start, end)  # the indefinite form is refused in there
+    if content + size > end:
         raise ValueError(CUT_SHORT)
-    return at, at + size
+    return content, content + size
+
+
+def _ber_end(der: bytes, start: int, end: int) -> int:
+    """Where the value at `start` ends, its lengths read the way BER writes them as well.
+
+    `tbsCertificate` is measured here, not judged: openssl hands those bytes back exactly
+    as it read them, so how they spell a length is nothing for us to disagree about - an
+    indefinite length closed by an end-of-contents marker among them, which openssl takes
+    and keeps like any other. Finding where the value stops is all that is wanted, so that
+    the values after it, the ones openssl does rewrite, can be held to DER. What is inside
+    is walked only far enough to pass the markers: a marker closes the value it opened, so
+    the nesting has to be counted even here. ValueError when a length or a marker runs past
+    `end`, because then where the value stops is anyone's guess.
+    """
+    at, depth = start, 0
+    while True:
+        if depth and der[at : at + 2] == b"\x00\x00":  # end-of-contents: one level closes
+            at, depth = at + 2, depth - 1
+            if not depth:
+                return at
+            continue
+        content, size = _der_header(der, at, end, minimal=False)
+        if size is None:  # indefinite: what it holds is values again, down to its marker
+            at, depth = content, depth + 1
+            continue
+        at = content + size
+        if at > end:
+            raise ValueError(CUT_SHORT)
+        if not depth:
+            return at
 
 
 def _check_der_lengths(der: bytes, start: int, end: int) -> None:
@@ -155,20 +205,22 @@ def _check_one_der_value(der: bytes) -> None:
     Whether the value is a certificate at all is `_parse_x509`'s question, and it is asked
     first; the question here is the spelling, because `digest` hashes these bytes while
     openssl fingerprints its own re-encoding. So every length has to be the one openssl
-    writes - except inside `tbsCertificate`, which it does not rewrite at all: OpenSSL
-    keeps the encoding it read there (the signature is over those exact bytes) and hands
-    it back unchanged, so a padded length inside it is in the file and in openssl's
-    fingerprint alike. Checked against OpenSSL 3.0.13 and 3.6.4, which agree, and refusing
-    more than they do would turn away a certificate that `openssl x509 -in F -out F`
-    cannot rewrite. `scripts/trust-ca.sh` draws the line from the other side - it compares
-    openssl's re-encoding with the decoded block byte for byte - and lands on the same one.
+    writes - except `tbsCertificate`, which it does not rewrite at all: OpenSSL keeps the
+    encoding it read there (the signature is over those exact bytes) and hands it back
+    unchanged, so a padded length in it - or the indefinite form, which is BER and not DER
+    at all - is in the file and in openssl's fingerprint alike. The value is therefore only
+    measured, never judged: `_ber_end` finds where it stops and nothing in it is refused.
+    Checked against OpenSSL 3.0.13 and 3.6.4, which agree, and refusing more than they do
+    would turn away a certificate that `openssl x509 -in F -out F` cannot rewrite.
+    `scripts/trust-ca.sh` draws the line from the other side - it compares openssl's
+    re-encoding with the decoded block byte for byte - and lands on the same one.
     """
     if len(der) < 2:
         raise ValueError("no certificate between the PEM delimiters")
     content, end = _der_value(der, 0, len(der))
     if end != len(der):
         raise ValueError("more than one certificate between the PEM delimiters; pass one")
-    _, after_tbs = _der_value(der, content, end, minimal=False)  # tbsCertificate, left as it came
+    after_tbs = _ber_end(der, content, end)  # tbsCertificate, left exactly as it came
     _check_der_lengths(der, after_tbs, end)
 
 
