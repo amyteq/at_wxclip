@@ -67,7 +67,7 @@ pip install wx-dlh                                             # 发布到 PyPI 
 pip install "wx-dlh @ git+https://github.com/amyteq/at_wxclip"  # 现在（仓库是私有的，要有访问权限）
 ```
 
-一条命令就装齐，`capture` / `proxy` 要用的 mitmproxy 是默认依赖。想装成独立的命令行工具就用 `pipx install wx-dlh` 或 `uv tool install wx-dlh`。注意 pip 装上的只有 `wx-dlh` 命令本身，`scripts/` 下的辅助脚本（信任 CA、Linux 上带代理启动 WeChat）不在包里，要从仓库取。发布流程见 `docs/pypi-publishing.md`。
+一条命令就装齐，`capture` / `proxy` 要用的 mitmproxy 是默认依赖。想装成独立的命令行工具就用 `pipx install wx-dlh` 或 `uv tool install wx-dlh`。信任 CA 也在这条命令里（`wx-dlh ca --install`，见下）；`scripts/` 下的辅助脚本不在包里，用 pip 装的人只有 Linux 上「带代理启动 WeChat」那一套（`run-wechat-proxied.sh` 和它编译的 preload shim）要从仓库取。发布流程见 `docs/pypi-publishing.md`。
 
 ### 开发
 
@@ -80,11 +80,13 @@ python -m wx_dlh --help
 准备工作两步，细节和判定方法见 `docs/M0-runbook.md`：
 
 ```bash
-.venv/bin/python -m wx_dlh ca      # 生成本地 CA，打印指纹与该装到哪个信任库
-scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
+.venv/bin/python -m wx_dlh ca             # 生成本地 CA，打印指纹，列出这台机器有哪些信任库
+.venv/bin/python -m wx_dlh ca --install   # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
 ```
 
-`trust-ca.sh` 按操作系统挑信任库，装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。**别用 `sudo` 跑整个脚本**：它只在 `--system` 时自己要 sudo，整个脚本跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝。
+`wx-dlh ca --install` 按操作系统挑信任库，没有 CA 时先生成一张；装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。`--list` 查看、`--remove` 撤销。**别用 `sudo` 跑它**：它只在 `--system` 时自己要 sudo，整个命令跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝。
+
+`scripts/trust-ca.sh` 是同一套逻辑的 shell 版，参数完全一样（`scripts/trust-ca.sh --install --system` ≡ `wx-dlh ca --install --system`），留给本机没装 wx-dlh 的情况，比如 wx-dlh 跑在 Docker 里、宿主机只需要信任 CA。
 
 | 系统 | 默认（不要 sudo） | `--system` | 状态 |
 |------|------------------|-----------|------|
@@ -92,7 +94,7 @@ scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat
 | macOS | 登录钥匙串，仅当前用户信任（会弹密码框） | 系统钥匙串，admin 域信任（sudo；参考实现用的就是它） | **未在真实 WeChat 上验证**（#11） |
 | Windows | `CurrentUser\Root`（certutil，会弹确认框） | `LocalMachine\Root`（要「以管理员身份」开的 shell） | **未验证**（#11） |
 
-Windows 上在 Git Bash / MSYS2 / Cygwin 里跑；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。`--list` 查看、`--remove` 撤销，按指纹找证书，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）。
+Windows 上用 Windows 自己的 Python 跑就行，不需要 Git Bash（shell 版才要 Git Bash / MSYS2 / Cygwin）；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。查找证书按指纹，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）；指纹由 Python 自己算，不需要 openssl。
 
 然后一条命令从播放到可播放文件（默认抓到第一个就停，文件落在 `downloads/`）：
 

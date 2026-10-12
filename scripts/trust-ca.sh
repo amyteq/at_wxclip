@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Install, list or remove the wx-dlh proxy CA in the trust stores WeChat reads.
 #
+# With wx-dlh installed, `wx-dlh ca --install` does the same - it is this script ported to
+# Python (wx_dlh/trust.py), and on Windows it needs no Git Bash. This script stays for a
+# machine that runs wx-dlh in Docker and has no Python of its own. The two take the same
+# flags and are held to the same cases, so a change to one is a change to both.
+#
 # Which store that is depends on the OS, and on Linux on how WeChat was installed:
 #
 # Linux - WeChat renders Channels pages in a Chromium-based webview (RadiumWMPF/WeChatAppEx),
@@ -50,8 +55,8 @@ TARGETS=()
 
 usage() {
   cat <<'USAGE'
-usage: scripts/trust-ca.sh [TARGET...] [--remove|--list] [--cert PATH] [--app-id ID]
-                           [--os linux|macos|windows]
+usage: scripts/trust-ca.sh [TARGET...] [--install|--remove|--list] [--cert PATH]
+                           [--app-id ID] [--os linux|macos|windows]
 
 With no target, the stores this OS has are used - never one that needs sudo or admin.
 
@@ -65,6 +70,7 @@ With no target, the stores this OS has are used - never one that needs sudo or a
   (WSL counts as Windows: WeChat runs on the host, so the host's store is the one.)
 
   --all       every store this OS has, including --system
+  --install   put the certificate in (the default)
   --remove    take the certificate back out
   --list      show what is installed where
   --cert      certificate to use (default: $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem,
@@ -86,6 +92,7 @@ while [ $# -gt 0 ]; do
     --windows) TARGETS+=(windows) ;;
     --system) TARGETS+=(system) ;;
     --all) TARGETS+=(all) ;;
+    --install) ACTION="add" ;;
     --remove) ACTION="remove" ;;
     --list) ACTION="list" ;;
     --cert) [ $# -ge 2 ] || die "--cert needs a path"; CERT="$2"; shift ;;

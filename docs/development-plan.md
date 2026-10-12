@@ -119,7 +119,7 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 | 环节 | 候选 | 取舍要点 |
 |------|------|----------|
 | MITM 代理 | **已定：`mitmproxy`**（唯一的运行时依赖，见表下） | 能改写响应体、自带 CA 管理与 flow 存档；`wx_dlh.proxy` 只是一个 addon，mitmproxy 延迟导入，其余子命令和 handler 的测试都不碰它 |
-| CA 信任 | 系统 CA 目录 / NSS / 客户端自带校验 | 本机 WeChat 是 Flatpak：宿主机 `update-ca-trust` 它看不到（runtime 自带证书包），webview 是 Chromium 内核、用 NSS 库。`scripts/trust-ca.sh` 三个位置都覆盖，哪个生效 M0 验 |
+| CA 信任 | 系统 CA 目录 / NSS / 客户端自带校验 | 本机 WeChat 是 Flatpak：宿主机 `update-ca-trust` 它看不到（runtime 自带证书包），webview 是 Chromium 内核、用 NSS 库。`wx-dlh ca --install`（`wx_dlh/trust.py`；没装 wx-dlh 时用同参数的 `scripts/trust-ca.sh`）三个位置都覆盖，macOS 钥匙串和 Windows 证书库也在内；Linux 已由 M0 实测，另两个待真机（#11） |
 | keystream | **已定：移植 ISAAC64 到 Python**（`wx_dlh/keystream.py`） | 与 `decrypt.js` 输出逐字节一致，Node 与 5.2 MB wasm 都不再需要；黄金样本表守着移植的正确性 |
 | 下载 | **已定：标准库 `urllib.request`** | 流式 + `Range` 续传够用，不加运行时依赖；`.part` 里是已解密字节，续传按偏移接 keystream |
 | web server | **已定：标准库 `http.server`** | 面板很薄，不值得为它引入大框架；`ThreadingHTTPServer` 够用，不加运行时依赖 |

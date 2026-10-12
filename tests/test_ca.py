@@ -1,4 +1,4 @@
-"""CA file naming and trust-store detection."""
+"""CA file naming, creation, fingerprints, and the move from the pre-rename directory."""
 
 import pytest
 
@@ -26,25 +26,21 @@ def test_ensure_ca_says_what_is_missing(tmp_path, monkeypatch):
         ca.ensure_ca(tmp_path / "ca")
 
 
-def test_trust_targets_cover_the_three_stores():
-    names = [t.name for t in ca.trust_targets()]
-    assert names == ["flatpak-nss", "user-nss", "system"]
+def test_fingerprints_match_what_openssl_and_the_stores_show(tmp_path):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+
+    pem = ca.ensure_ca(tmp_path / "ca")
+    loaded = x509.load_pem_x509_certificate(pem.read_bytes())
+    sha256 = loaded.fingerprint(hashes.SHA256()).hex().upper()
+    assert ca.fingerprint(pem) == ":".join(sha256[i : i + 2] for i in range(0, 64, 2))
+    assert ca.fingerprint(pem, "sha1", sep="") == loaded.fingerprint(hashes.SHA1()).hex().upper()
 
 
-def test_trust_hint_points_at_the_cert_and_the_script(tmp_path):
-    hint = ca.trust_hint(tmp_path)
-    assert str(ca.cert_path(tmp_path)) in hint
-    assert "scripts/trust-ca.sh" in hint
-
-
-def test_flatpak_nssdb_is_inside_the_sandbox_home():
-    assert ca.flatpak_nssdb("com.example.App").parts[-5:] == (
-        ".var",
-        "app",
-        "com.example.App",
-        ".pki",
-        "nssdb",
-    )
+def test_no_certificate_means_no_fingerprint(tmp_path):
+    assert ca.fingerprint(tmp_path / "missing.pem") == ""
+    (tmp_path / "junk.pem").write_text("not a certificate")
+    assert ca.fingerprint(tmp_path / "junk.pem") == ""
 
 
 def _make_ca(ca_dir, body="pem"):

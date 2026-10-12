@@ -115,6 +115,12 @@ def test_the_os_is_detected_and_the_default_store_follows(run, uname, env, os_na
     assert expected in out
 
 
+def test_install_can_be_spelled_out_like_wx_dlh_ca_install(run):
+    code, out, calls = run("--install", STUB_UNAME="Darwin")
+    assert code == 0, out
+    assert [c for c in calls if c.startswith("security add-trusted-cert")]
+
+
 def test_plain_linux_is_linux(run):
     code, out, _ = run("--list", "--user", STUB_UNAME="Linux")
     assert code == 0, out

@@ -46,7 +46,7 @@ owner 在 [#24 的 review](https://github.com/amyteq/at_wxclip/pull/24#discussio
 | `license`、`license-files`、`authors` | MIT 许可证（`LICENSE` 进 wheel 和 sdist）和作者，见上面第 2、3 条 |
 | `readme`、`keywords`、`classifiers`、`[project.urls]` | PyPI 页面上的内容。`classifiers` 只写实测过的：Linux、Python 3.11 / 3.12；macOS / Windows 验证过（#11）再加。开 donation 时在 `[project.urls]` 加 `Funding` |
 
-**pip 装上的只有 `wx_dlh` 包本身，`scripts/` 不在 wheel 里。** `trust-ca.sh`、`run-wechat-proxied.sh` 是给 checkout 用的；在「信任 CA」做成 `wx-dlh` 的子命令之前，pip 用户要从仓库拿这些脚本，README 里写明了。
+**pip 装上的只有 `wx_dlh` 包本身，`scripts/` 不在 wheel 里。** 信任 CA 是 `wx-dlh ca --install`，包里就有；`trust-ca.sh` 是它的 shell 版，留给没装 wx-dlh 的机器（例如 Docker 的宿主机）。pip 用户还要从仓库拿的只剩 Linux 上带代理启动 WeChat 那一套（`run-wechat-proxied.sh` 和它编译的 preload shim），README 里写明了。
 
 ## 一次性准备
 
