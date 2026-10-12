@@ -25,7 +25,7 @@ M0 在 Linux 上的教训：`update-ca-trust` 成功、`certutil` 成功、证�
 |---|---|--------|----------|
 | 1 | **路由** | `captures/traffic-*.jsonl` | 出现 `channels.weixin.qq.com` 的条目。只看到头像、mmtls 那些 host = 主进程进来了、webview 没进来 |
 | 2 | **信任** | 同上 + `captures/pages/*.html` | 那条不是 TLS 握手失败，且 `pages/` 下真的落了 HTML 文件（= 拿到了明文） |
-| 3 | **注入** | `captures/captures-*.jsonl` | 有 `probe` 事件且 `has_bridge: true`、`hooked: true` |
+| 3 | **注入** | `captures/captures-*.jsonl` | 有 `kind` 为 `hook` 的事件，且它的 `payload.has_invoke` 是 `true`（= `WeixinJSBridge.invoke` 真的被包上了）。别拿 `probe` 判这一关，见纪律 4 |
 | 4 | **抓取** | 同上 | 有 `capture` 事件，带 `decode_key` |
 
 四关都过之后端到端收尾：
@@ -35,11 +35,12 @@ wx-dlh download --from-capture --index 0     # 直连下载 + 解密
 ffprobe <file>                               # 认得出 h264/aac 就是真的过了
 ```
 
-### 三条判定纪律
+### 四条判定纪律
 
 1. **命令成功不算过。** 每一关都要有客户端侧的证据（上表右列），不要拿命令退出码交差。
 2. **改完信任库要重启 WeChat。** 证书库是启动时读的；不重启就看到的失败是假失败。
 3. **别信标记文件。** 参考实现装完证书写一个 `installed.lock`，之后只查这个文件在不在（`cert.js` 的 `checkCertInstalled`），**从不回头查证书是不是真在库里**。人手把证书删了、或者当初压根没装进去，它都认为装好了。我们要落地的话，装完必须回查一次真库 —— `wx-dlh ca --install`（#28）和它的 shell 版 `scripts/trust-ca.sh`（#23）都是这么做的。但库里查得到只说明装上了，不说明 WeChat 认它，那是第 2 关要回答的。
+4. **`probe` 不是第 3 关的判据。** `probe` 只在注入脚本装完钩子那一刻发一次（`web/inject.js` 末尾的 `install()` 之后），里面的 `has_bridge` / `hooked` 记的是**那一刻**的状态。客户端晚一步才给 `window.WeixinJSBridge` 赋值的话，这唯一一条 `probe` 两个字段都是 `false`，之后真包上了也只补一条 `hook` 事件、不会再发一条 `probe` —— 照着 `probe` 判就记下一个假失败。反过来，`hook()` 里 `state.hooked` 是无条件置 `true` 的（`invoke` 不是函数时也照置，只是不包），所以 `hooked: true` 也不等于 invoke 包上了。两头都能答的只有 `hook` 事件里的 `has_invoke`。`probe` 仍然要看，但它回答的是另一个问题：这一帧里脚本到底跑没跑（连一条 `probe` 都没有 = 注入没落地，回头看第 2 关，别在第 3 关上耗）。
 
 ## Windows
 
@@ -161,7 +162,7 @@ python -m wx_dlh proxy
 | 1 路由：webview | | |
 | 2 信任：主进程 | | |
 | 2 信任：webview | | |
-| 3 注入 + bridge | | |
+| 3 注入：`hook` 事件的 `has_invoke` | | |
 | 4 `decode_key` 到手 | | |
 | 端到端可播放文件 | | |
 | webview 内核与版本 | | |
