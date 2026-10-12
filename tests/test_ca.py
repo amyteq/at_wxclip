@@ -210,6 +210,33 @@ def test_what_openssl_keeps_is_kept_here_too(der):
     assert ca.digest(variant) != ca.digest(der)  # a different file, and a different CA to a store
 
 
+def test_a_certificate_is_taken_where_the_der_reader_takes_nothing(tmp_path, der, monkeypatch):
+    """The reading goes in as PEM, and this is why: `cadata` of `bytes` is read as a stream
+    of DER values, and CPython up to 3.11.15 ended that stream only on
+    ASN1_R_HEADER_TOO_LONG, while OpenSSL's CVE-2026-34180 releases end it with
+    ASN1_R_NOT_ENOUGH_DATA (python/cpython#151504) - so on those pairings, which this
+    project supports and its own interpreter is one of, a clean CA came back as "no X.509
+    certificate" and `ca --install/--list/--remove` refused the CA they were pointed at.
+    The host's own library says nothing about that, so the test makes any build behave like
+    an affected one: bytes `cadata` raises, and the certificate must still be taken, under
+    the fingerprint the stores are searched by - and the rule must still refuse what openssl
+    would rewrite."""
+    der_reader = ssl.SSLContext.load_verify_locations
+
+    def no_der_stream(self, cafile=None, capath=None, cadata=None):
+        if isinstance(cadata, bytes | bytearray):
+            raise ssl.SSLError(1, "[ASN1: NOT_ENOUGH_DATA] not enough data (_ssl.c:4057)")
+        return der_reader(self, cafile, capath, cadata)
+
+    monkeypatch.setattr(ssl.SSLContext, "load_verify_locations", no_der_stream)
+    assert ca.cert_der(_block(der)) == der
+    clean = tmp_path / "mitmproxy-ca-cert.pem"
+    clean.write_text(_block(der))
+    assert ca.fingerprint(clean) == ca.digest(der)
+    with pytest.raises(ValueError, match="openssl writes it back"):
+        ca.cert_der(_block(_respell(der, "padded")))
+
+
 @pytest.fixture(scope="module")
 def leaf_pem() -> str:
     """A self-signed certificate that is no CA - `basicConstraints` says CA:FALSE. Built

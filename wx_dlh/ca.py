@@ -96,10 +96,10 @@ PRIVATE_KEY_PEM = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 #: byte, which is the comparison `scripts/trust-ca.sh` makes with the CLI.
 NOT_DER = (
     "what is between the PEM delimiters is not the certificate alone as openssl writes it "
-    "back: either something rides behind it, or a tag or a length is spelled a way DER does "
-    "not allow and openssl rewrites before it fingerprints - the fingerprints would differ. "
-    "Pass the certificate by itself, re-encoded if need be with: openssl x509 -in FILE -out "
-    "FILE"
+    "back: either something rides behind it - a second certificate, a key, padding - or a "
+    "tag or a length is spelled a way DER does not allow and openssl rewrites before it "
+    "fingerprints - the fingerprints would differ. Pass the certificate by itself, "
+    "re-encoded if need be with: openssl x509 -in FILE -out FILE"
 )
 
 #: `--install` files what it is given as a trust anchor, so what may not sign certificates
@@ -121,16 +121,29 @@ def _parse_x509(der: bytes) -> None:
     written the way openssl writes one back.
 
     Both the reading and the verdict are OpenSSL's own, reached through `ssl`:
-    `load_verify_locations` hands DER straight to it without a file or a socket, and
-    `get_ca_certs(binary_form=True)` hands back what it made of it - the certificate
+    `load_verify_locations` hands the bytes to it without a file or a socket, and
+    `get_ca_certs(binary_form=True)` hands back what it made of them - the certificate
     re-encoded, which is the `openssl x509 -outform DER` the script compares against and the
     bytes openssl fingerprints. One certificate back, equal to the one handed in, is the
-    whole test, and it is the script's test: a bundle comes back as two values, anything
-    riding behind the certificate is missing from the re-encoding, and a tag or length
-    openssl rewrites comes back rewritten. Nothing here walks DER itself, so there is no
-    list of spellings of our own to drift from openssl's - checked against OpenSSL 3.0.13
-    and 3.6.4, which do not accept quite the same files as each other, and under both the
-    two halves of the port still accept the same ones. The context is thrown away.
+    whole test, and it is the script's test: anything riding behind the certificate is
+    missing from the re-encoding - a second certificate included, since openssl stops at the
+    end of the first, which is why a bundle fails this comparison in both halves - and a tag
+    or length openssl rewrites comes back rewritten. Nothing here walks DER itself, so there
+    is no list of spellings of our own to drift from openssl's - checked against OpenSSL
+    3.0.13 and 3.6.4, which do not accept quite the same files as each other, and under both
+    the two halves of the port still accept the same ones. The context is thrown away.
+
+    The bytes go in wrapped back into a PEM block rather than as bare DER, and the block is
+    built here from `der` so that openssl still sees those bytes and nothing else of the
+    text they came out of. `cadata` of `bytes` is read as a stream of DER values, and
+    CPython up to 3.11.15 took only ASN1_R_HEADER_TOO_LONG for the end of it; OpenSSL's
+    CVE-2026-34180 hardening (3.0.21, 3.4.6, 3.5.7, 3.6.3, 4.0.1) ends it with
+    ASN1_R_NOT_ENOUGH_DATA instead, so on those pairings every valid certificate came back
+    as no certificate at all and `ca --install/--list/--remove` refused the CA it was
+    pointed at (python/cpython#151504). This project supports 3.11, and its own interpreter
+    is one of those builds. `cadata` of `str` is read as PEM, which ends on PEM's own
+    PEM_R_NO_START_LINE - a reason no OpenSSL release has moved - and what comes back out of
+    `get_ca_certs` is the same either way.
 
     What `get_ca_certs` leaves out is what X509_check_ca rejects, so a certificate that is
     no CA comes back as nothing at all - the rule the script spells with `-purpose`.
@@ -141,15 +154,13 @@ def _parse_x509(der: bytes) -> None:
     """
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     try:
-        ctx.load_verify_locations(cadata=der)
+        ctx.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(der))
     except (ssl.SSLError, ValueError) as exc:  # SSLError is an OSError: it must not escape
         raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
     read = ctx.get_ca_certs(binary_form=True)
     if not read:
         raise ValueError(NOT_A_CA)
-    if len(read) > 1:  # openssl reads `cadata` as a list, and a store takes one anchor
-        raise ValueError("more than one certificate between the PEM delimiters; pass one")
-    if read[0] != der:
+    if read[0] != der:  # one block in, so one certificate out, and it has to be this one
         raise ValueError(NOT_DER)
 
 

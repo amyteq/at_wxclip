@@ -242,10 +242,12 @@ def test_what_is_between_the_pem_delimiters_is_parsed_not_just_decoded(
 
 
 def test_two_certificates_in_one_block_are_refused(make, cert, stale, tmp_path):
-    """OpenSSL reads a PEM block as a list and takes the certificates in it one after the
-    other, so a second one hiding behind the first would pass the parse. The file is what
-    `--system` files as a single anchor, and its fingerprint - the one `--list` prints and
-    `--remove` searches by - would then be of bytes that are neither CA."""
+    """OpenSSL stops at the end of the first certificate in the block, so a second one
+    hiding behind it would pass the parse unread. The file is what `--system` files as a
+    single anchor, and its fingerprint - the one `--list` prints and `--remove` searches
+    by - would then be of bytes that are neither CA. It rides behind the certificate like
+    any other trailing bytes, and the comparison with openssl's re-encoding is what catches
+    it, here as in `scripts/trust-ca.sh`."""
     both = ca.cert_der(cert[0].read_text()) + ca.cert_der(stale)
     t, system, _ = make("linux", anchor_dirs=_anchors(tmp_path))
     t.cert = tmp_path / "both.pem"
@@ -254,7 +256,7 @@ def test_two_certificates_in_one_block_are_refused(make, cert, stale, tmp_path):
         f"{base64.encodebytes(both).decode()}"
         "-----END CERTIFICATE-----\n"
     )
-    with pytest.raises(TrustError, match="more than one certificate"):
+    with pytest.raises(TrustError, match="a second certificate"):
         t.apply("install", ["system", "user"])
     assert not system.calls
     assert not list((tmp_path / "anchors").iterdir())
