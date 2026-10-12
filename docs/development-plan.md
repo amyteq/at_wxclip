@@ -152,6 +152,8 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 
 ## 跟踪
 
+- Android 平板路线 spike（#27，登录前受阻）：https://github.com/amyteq/at_wxclip/issues/27 —— 回答 gateway https://github.com/amyteq/at_wxclip/issues/26 的 D1；redroid 已启动但原版 WeChat 崩溃，Android 13 AVD r17 缺少 ARM ABI；当前组合不可用，步骤①受阻，完整证据见 `docs/redroid-pad-spike.md`。
+
 - 讨论：https://github.com/amyteq/at_wxclip/discussions/2
 - M0（已完成）：https://github.com/amyteq/at_wxclip/issues/4 —— Linux 侧的结论、踩过的坑和跨平台问答都在那条 issue 里
 - M1（已完成）：https://github.com/amyteq/at_wxclip/issues/8
