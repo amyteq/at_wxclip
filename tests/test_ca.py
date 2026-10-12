@@ -2,7 +2,7 @@
 
 import pytest
 
-from wx_dlh import ca
+from wx_dlh import ca, platforms
 
 
 def test_file_names_are_the_ones_mitmproxy_looks_for(tmp_path):
@@ -27,14 +27,47 @@ def test_ensure_ca_says_what_is_missing(tmp_path, monkeypatch):
 
 
 def test_trust_targets_cover_the_three_stores():
-    names = [t.name for t in ca.trust_targets()]
+    # Pinned to linux rather than left to sys.platform: these three are the stores a
+    # *Linux* WeChat reads, and that is what this test is about.
+    names = [t.name for t in ca.trust_targets(platform="linux")]
     assert names == ["flatpak-nss", "user-nss", "system"]
 
 
+@pytest.mark.parametrize("platform", ["darwin", "win32", "freebsd13"])
+def test_trust_targets_are_empty_off_linux(platform):
+    """Reporting the Linux stores as merely `available=False` elsewhere would read as
+    "install these and you are done" - the wrong answer in the shape of a right one."""
+    assert ca.trust_targets(platform=platform) == []
+
+
 def test_trust_hint_points_at_the_cert_and_the_script(tmp_path):
-    hint = ca.trust_hint(tmp_path)
+    hint = ca.trust_hint(tmp_path, platform="linux")
     assert str(ca.cert_path(tmp_path)) in hint
     assert "scripts/trust-ca.sh" in hint
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_trust_hint_off_linux_still_names_the_certificate(tmp_path, platform):
+    """The CA file is the same everywhere - mitmproxy makes it on any platform - so the
+    paths stay useful even where we cannot say what to do with them."""
+    hint = ca.trust_hint(tmp_path, platform=platform)
+    assert str(ca.cert_path(tmp_path)) in hint
+    assert str(ca.key_path(tmp_path)) in hint
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "freebsd13"])
+def test_trust_hint_off_linux_sends_people_to_the_playbook_not_to_a_linux_script(
+    tmp_path, platform
+):
+    hint = ca.trust_hint(tmp_path, platform=platform)
+    assert "scripts/trust-ca.sh" not in hint
+    assert "flatpak" not in hint.lower()
+    assert platforms.PLAYBOOK in hint
+    assert platforms.ISSUE in hint
+
+
+def test_trust_hint_defaults_to_this_machine(tmp_path):
+    assert ca.trust_hint(tmp_path) == ca.trust_hint(tmp_path, platform=platforms.current())
 
 
 def test_flatpak_nssdb_is_inside_the_sandbox_home():

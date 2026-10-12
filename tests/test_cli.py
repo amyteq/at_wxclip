@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from wx_dlh import __version__
-from wx_dlh.__main__ import PLANNED, build_parser, main
+from wx_dlh import __version__, platforms
+from wx_dlh.__main__ import PLANNED, _warn_unverified_platform, build_parser, main
 from wx_dlh.keystream import HEAD_BYTES, keystream
 
 
@@ -35,6 +35,24 @@ def test_every_command_is_wired_up(command, capsys):
 def test_unknown_command_is_rejected():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["nope"])
+
+
+def test_an_unverified_platform_is_announced_before_the_proxy_listens(monkeypatch, capsys):
+    """On Windows or macOS the proxy starts fine and captures nothing, which looks exactly
+    like "the video has not been played yet". Say which one it is, on stderr, up front."""
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: False)
+    monkeypatch.setattr(platforms, "current", lambda *a, **k: platforms.MACOS)
+    _warn_unverified_platform()
+    captured = capsys.readouterr()
+    assert "NOT verified" in captured.err
+    assert platforms.PLAYBOOK in captured.err
+    assert captured.out == ""  # never mixed into the capture log's stream
+
+
+def test_a_verified_platform_says_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: True)
+    _warn_unverified_platform()
+    assert capsys.readouterr().err == ""
 
 
 def test_ca_creates_the_ca_and_explains_the_trust_stores(tmp_path, capsys):

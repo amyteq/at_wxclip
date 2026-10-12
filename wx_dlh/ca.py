@@ -3,6 +3,11 @@
 mitmproxy owns the CA material, and we keep its file names (`mitmproxy-ca*`) so it picks
 the same files up from `confdir` on the next run - only the directory is ours. The private
 key never belongs in the repo: the default location is outside it.
+
+Creating the CA is portable - mitmproxy does that anywhere. *Trusting* it is not: the
+stores below are the ones a Linux WeChat reads, and probing for `flatpak` or `certutil`
+on another platform answers a question nobody asked. Everything past `ensure_ca` is
+therefore behind `platforms`, and on Windows and macOS says so instead of guessing.
 """
 
 from __future__ import annotations
@@ -12,6 +17,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from wx_dlh import platforms
 
 #: mitmproxy's naming inside `confdir`. Do not rename: mitmproxy looks for these.
 CA_BASENAME = "mitmproxy"
@@ -106,9 +113,15 @@ def flatpak_nssdb(app_id: str = FLATPAK_APP_ID) -> Path:
     return Path.home() / ".var" / "app" / app_id / ".pki" / "nssdb"
 
 
-def trust_targets(app_id: str = FLATPAK_APP_ID) -> list[TrustTarget]:
+def trust_targets(app_id: str = FLATPAK_APP_ID, platform: str | None = None) -> list[TrustTarget]:
     """Which trust stores this machine actually has. Detection only - installing is
-    `scripts/trust-ca.sh`, because the system store needs sudo."""
+    `scripts/trust-ca.sh`, because the system store needs sudo.
+
+    Empty off Linux: these three stores are what a *Linux* WeChat reads, and reporting
+    them as merely unavailable elsewhere would read as "install these and you are done".
+    """
+    if platforms.current(platform) != platforms.LINUX:
+        return []
     flatpak = shutil.which("flatpak")
     installed = False
     if flatpak:
@@ -135,8 +148,13 @@ def trust_targets(app_id: str = FLATPAK_APP_ID) -> list[TrustTarget]:
     ]
 
 
-def trust_hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID) -> str:
-    """Human-facing next steps; the walkthrough lives in `docs/M0-runbook.md`."""
+def trust_hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID, platform: str | None = None) -> str:
+    """Human-facing next steps; the walkthrough lives in `docs/M0-runbook.md`.
+
+    The certificate itself is the same file on every platform, so those lines are always
+    printed. What changes is whether we can say where to put it: off Linux we cannot, and
+    say that rather than print Linux's stores with minus signs next to them.
+    """
     pem = cert_path(ca_dir)
     lines = [
         f"CA certificate: {pem}",
@@ -146,8 +164,14 @@ def trust_hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID) -> str:
     if fp:
         lines.append(f"SHA-256:        {fp}")
     lines.append("")
+
+    host = platforms.current(platform)
+    if host != platforms.LINUX:
+        lines.append(platforms.unsupported_note(host))
+        return "\n".join(lines)
+
     lines.append("Trust it where WeChat will look:")
-    for target in trust_targets(app_id):
+    for target in trust_targets(app_id, platform=platform):
         mark = "+" if target.available else "-"
         lines.append(f"  [{mark}] {target.name}: {target.detail}")
     lines.append("")
