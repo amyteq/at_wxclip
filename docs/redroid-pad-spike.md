@@ -6,7 +6,7 @@
 
 ## 当前结论
 
-**当前实测组合不能作为 gateway 客户端，停在步骤①的登录前启动验证。** redroid 能启动 Android 13、ABI 包含 ARM64，但官网当前 WeChat 8.0.79 在不同设备属性及有/无代理时均崩溃；官网兼容包 8.0.42 也不能正常启动。官方 Android 13 Google APIs x86_64 AVD revision 17 能启动，却没有 ARM 翻译，安装当前 APK 明确失败。两个环境的 Android 默认 CA 验证都通过，但 WeChat 自身的 CA 信任、平板身份与视频号路径尚未验证。D1：本次组合不可用；更广泛的 pad 路线仍未证实，不能据此断言「视频号必须 hook」，也不能声称已经验证容器化 Linux gateway。
+**当前实测组合不能作为 gateway 客户端，停在步骤①的登录前启动验证。** redroid 能启动 Android 13、ABI 包含 ARM64，但官网当前 WeChat 8.0.79 在不同设备属性及有/无代理时均崩溃；官网兼容包 8.0.42 也不能正常启动。官方 Android 13 Google APIs x86_64 AVD revision 17 能启动，却没有 ARM 翻译，安装当前 APK 明确失败。`budtmo/docker-android:emulator_13.0` 的 Pixel C 补测也实际启动了同一 Android 13 r17 guest，安装当前 APK 同样报 ABI 不匹配，并另发现内存上限与重启脚本问题。前两条环境的 Android 默认 CA 验证都通过，但 WeChat 自身的 CA 信任、平板身份与视频号路径尚未验证。D1：本次组合不可用；更广泛的 pad 路线仍未证实，不能据此断言「视频号必须 hook」，也不能声称已经验证容器化 Linux gateway。
 
 ## 1. 宿主检查
 
@@ -31,7 +31,7 @@ df -h /home/harry/test
 | KVM | `/dev/kvm` 存在；`KVM (version 12) is installed and usable.` |
 | 工作盘剩余空间 | 233 GiB |
 
-没有安装内核、加载模块、重启宿主、使用 sudo、调整宿主网络或改动 M0 的 Flatpak 设置。Docker 使用现有默认网桥，网关经 `docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'` 查得为 `172.17.0.1`。
+没有在宿主安装内核、加载模块、重启、执行 sudo、调整网络或改动 M0 的 Flatpak 设置。Docker 使用现有默认网桥，网关经 `docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'` 查得为 `172.17.0.1`。
 
 ## 2. redroid 启动与 ARM 翻译
 
@@ -336,7 +336,67 @@ dlopen failed: .../app_recovery_lib/libstlport_shared.so is for EM_ARM (40) inst
 
 已执行 `adb -s 127.0.0.1:5555 shell am force-stop com.tencent.mm` 停止重试。没有进入扫码，不再扩大版本矩阵；该补测只说明这一个官方兼容包也未解决启动问题。
 
-## 7. 步骤①②③与 AC 状态
+## 7. docker-android 补测（owner follow-up）
+
+[owner 要求](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117679194) 同时补充 Redroid 手动步骤并尝试 `budtmo/docker-android`。前者见 [手动测试清单](redroid-manual-test.md)，后者于 2026-10-12 15:22–15:37 AEDT 在同一宿主实测。选择 `emulator_13.0` 以保持本 issue 的 Android 13 范围；这是包装官方 Google APIs emulator 的镜像，不是另一个 ARM64 Android 实现。
+
+准备参考 [上游 README](https://github.com/budtmo/docker-android)、[配置文档](https://github.com/budtmo/docker-android/blob/21926469063a3401685229deb5f8dce4babdfa16/documentations/CUSTOM_CONFIGURATIONS.md) 与 [analytics 关闭方式](https://github.com/budtmo/docker-android/blob/21926469063a3401685229deb5f8dce4babdfa16/documentations/USER_BEHAVIOR_ANALYTICS.md)。本次读到的上游 source HEAD 为 `21926469063a3401685229deb5f8dce4babdfa16`；运行镜像身份以下面的 digest 为准，不把 source HEAD 当作镜像构建版本。
+
+```bash
+docker pull budtmo/docker-android:emulator_13.0
+docker image inspect budtmo/docker-android:emulator_13.0 --format '{{.Id}} {{join .RepoDigests ","}}'
+docker volume create wx-dlh-docker-android-27
+docker run -d --name docker-android-wx-dlh-27 \
+  --device /dev/kvm --cpus 4 --memory 6g --shm-size 2g \
+  -p 127.0.0.1:6080:6080 \
+  -e EMULATOR_DEVICE='Pixel C' -e EMULATOR_NO_SKIN=true \
+  -e WEB_VNC=true -e USER_BEHAVIOR_ANALYTICS=false \
+  -e EMULATOR_DATA_PARTITION=4096m \
+  -e EMULATOR_ADDITIONAL_ARGS='-no-snapshot -no-audio -memory 3072 -cores 2' \
+  --mount source=wx-dlh-docker-android-27,target=/home/androidusr \
+  budtmo/docker-android:emulator_13.0
+docker exec docker-android-wx-dlh-27 cat device_status
+docker exec docker-android-wx-dlh-27 adb devices
+docker exec docker-android-wx-dlh-27 adb -s emulator-5554 shell getprop sys.boot_completed
+curl -s -o /dev/null -w 'noVNC HTTP %{http_code}\n' --max-time 5 http://127.0.0.1:6080/
+```
+
+以上是实际失败实验的原命令，包含后述的 6 GiB 上限问题，不是已验证可稳定使用的部署建议。容器只透传现有 KVM，不使用 `--privileged`；ADB 全部通过 `docker exec` 在容器内执行，没有发布 5554/5555、Appium 或日志服务端口。noVNC 只绑定 `127.0.0.1:6080`，HTTP 返回 200；没有对浏览器可交互性作完整验收，也没有登录。宿主 `/dev/kvm` 在前后均为 `root:kvm` / `0666`，没有修改宿主设备权限。
+
+| 项目 | 实测 |
+|---|---|
+| tag | `budtmo/docker-android:emulator_13.0` |
+| manifest digest | `sha256:be6a2323cb41014478e5ef678d8ef32df1694ecefeb5e5c3f49e147c5d46dded` |
+| amd64 image ID | `sha256:9bc6568d2324ae1febd1ac7bdca7d7900a2472799f2d22a98647c0735a433cca` |
+| 本地镜像大小 | 12,191,924,548 bytes |
+| emulator | `37.2.12.0` / build `16428233` |
+| guest | Android `13` / API `33`，Google APIs x86_64 revision `17` |
+| fingerprint | `google/sdk_gphone64_x86_64/emu64x:13/TE1A.240213.009/12342917:userdebug/dev-keys` |
+| 设备配置与读回 | profile `Pixel C`；model `sdk_gphone64_x86_64`；characteristics `emulator` |
+| 显示 | `2560x1800` / `320` dpi |
+| ABI / native bridge | `x86_64` / `0` |
+| 首次启动 | 约 2.5 分钟后 `sys.boot_completed=1`，`device_status=READY`；90 秒初始等待不够 |
+
+安装与先前实验完全相同的官网 ARM64 APK，先在容器内回查 SHA-256：
+
+```bash
+docker cp temp/weixin8079android3200_0x28004f30_arm64_1.apk docker-android-wx-dlh-27:/tmp/weixin-8.0.79.apk
+docker exec docker-android-wx-dlh-27 sha256sum /tmp/weixin-8.0.79.apk
+docker exec docker-android-wx-dlh-27 timeout 60 adb -s emulator-5554 install /tmp/weixin-8.0.79.apk
+```
+
+hash 仍为 `f2a725bc04302ad218a563533ae79356e66b64aa711b275bc919a8d432f7e15d`。安装命令明确返回 `Failure [INSTALL_FAILED_NO_MATCHING_ABIS: INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]`。所以 Docker 包装没有解决本次 r17 guest 缺少 ARM 翻译的问题；此结论来自真实安装失败，不只是根据 Dockerfile 推测。
+
+另外发现两个独立的运行问题，不混同于 APK 的 ABI 失败：
+
+- 首次安装阶段之后 ADB 断开，cgroup `memory.events` 显示 `oom_kill 1`，容器常驻内存降到约 250 MiB。6 GiB 的容器限制不足以维持本次高分辨率软件渲染实验，不能据此说镜像完全无法启动。
+- 一次有界重试执行了 `docker update --memory 10g --memory-swap 10g docker-android-wx-dlh-27` 与 `docker restart -t 15 docker-android-wx-dlh-27`，但镜像启动脚本在 `sudo chown 1300:1301 /dev/kvm` 处报 `sudo: unknown user root`，没有重新启动 emulator。镜像内实际 `change_permission()` 在首次启动执行 `sudo sed -i '1d' /etc/passwd`，重启后回查 `root` 条目确实缺失；这是容器内部状态，未修改宿主 `/etc/passwd`。因此未证明 10 GiB 能稳定运行。
+
+重启日志还显示它将已有 `hw.device.name=pixel_c` 判断为未创建，重新调用 `avdmanager create avd -f`；不能因为挂了 volume 就宣称该组合可保留已登录的会话。本次从未登录，未因此损失 owner 的微信状态。没有修补第三方镜像、替换 guest 翻译库、尝试其他 Android 大版本或绕过微信检查；APK 的明确 ABI 错误已经使本次 Android 13 组合无法进入步骤①。
+
+未重复运行此镜像的 CA/代理实验：APK 尚不能安装，已有两条环境的系统 CA 证据也不能替代本镜像或 WeChat 自身的 CA 验证。该路线的身份、电脑共存、视频号播放、H5/bridge/key 均未验证。结束时执行 `docker stop -t 15 docker-android-wx-dlh-27`；专用容器与 named volume 保留作本地诊断，当前不能直接 `docker start` 作为可用客户端。
+
+## 8. 步骤①②③与 AC 状态
 
 | 参数 / 路线 | 启动实测 | 平板身份、电脑共存 |
 |---|---|---|
@@ -345,6 +405,7 @@ dlopen failed: .../app_recovery_lib/libstlport_shared.so is for EM_ARM (40) inst
 | redroid SM-X610 + tablet，8.0.79 | 参数回查正确；同样崩溃 | 未验证，未登录 |
 | AVD Pixel Tablet profile / Android 13 r17，8.0.79 | OS 启动，APK 安装因缺少匹配 ABI 失败 | 未验证，未登录 |
 | redroid SM-X610 + tablet，全新 data，8.0.42 | ARM32 库加载错误，反复退出 | 未验证，未登录 |
+| docker-android Android 13 / Pixel C / r17，8.0.79 | OS 首次启动；APK 安装报 ABI 不匹配；另有 OOM 和重启脚本错误 | 未验证，未登录 |
 
 - **①：停在登录前的应用启动。** 这不是扫码不可用，也不是 owner 不在线造成的等待；目前没有可交给 owner 扫码的稳定客户端。
 - **②：未运行。** 未确认视频号入口，没有播放视频。来自 Android/Google 后台与 TLS 探针的 host 数量不能用作 AC4 的证据；没有可报告的 WeChat Channels 播放会话。
@@ -353,24 +414,26 @@ dlopen failed: .../app_recovery_lib/libstlport_shared.so is for EM_ARM (40) inst
 
 | AC | 状态 | 证据 / 缺口 |
 |---|---|---|
-| AC1 | Android 基础启动通过；应用兼容性失败 | redroid Android 13、ARM64 ABI 和本地 adb 实测；AVD 独立启动但缺少 ARM ABI |
-| AC2 | 部分完成 | 两条环境的安装、镜像、APK、代理、系统 CA 可复现；WeChat 自身接受 CA 尚未验证 |
+| AC1 | Android 基础启动通过；应用兼容性失败 | redroid Android 13、ARM64 ABI 和本地 adb 实测；AVD 和 docker-android 独立启动但缺少 ARM ABI |
+| AC2 | 部分完成 | 三条环境的启动/安装尝试可复现；前两条的代理/系统 CA 已测；docker-android 的 CA 与 WeChat 自身接受 CA 尚未验证 |
 | AC3 | 未运行，受应用启动阻塞 | 全部参数如上；无 owner 登录及设备槽观察 |
 | AC4 | 未运行，依赖 AC3 | 没有 Channels 播放，不能给出 H5/bridge 的阴性结论 |
 | AC5 | 未运行，依赖 AC4 | 没有进入 key 来源验证，不满足另开 hook issue 的触发条件 |
 | AC6 | 未运行 | 停在步骤①；没有自动化播放 |
 | AC7 | 文档与阶段报告完成；完整路线结论受阻 | 本文、project background、development plan，以及 #27 / #26 的报告；D1 为当前组合不可用，pad 普遍可行性未决 |
-| AC8 | 检查通过 | `make lint test`：ruff 通过，434 tests passed（21.51s）；仅文档提交，运行产物留在忽略/外部目录 |
+| AC8 | 检查通过 | `make lint test`：ruff 通过，434 tests passed（补测 21.45s）；仅文档提交，运行产物留在忽略/外部目录 |
 
-## 8. 清理、有效工作量与停止点
+## 9. 清理、有效工作量与停止点
 
-本轮有效工作约 25 分钟，未耗尽一天上限；停止原因是所测客户端组合均无法进入登录。已执行 `adb -s emulator-5556 emu kill`、`docker stop redroid-wx-dlh-27-compat`，初始 redroid 与 tablet 容器此前已停止；两个本次代理进程也已结束。复查 `5555/5556/5557/8899` 没有本次监听。Docker stop 最后以 137 退出，属于主动停止本次容器，不应当作 Android 启动失败证据。专用 `data/`、`data-8042/`、AVD、SDK、CA 均保留，没有删除 owner 数据。
+首轮有效工作约 25 分钟，补充的手动指南与 docker-android 实测约 15 分钟，累计约 40 分钟，未耗尽一天上限；停止原因是所测客户端组合均无法进入登录。已执行 `adb -s emulator-5556 emu kill`、`docker stop redroid-wx-dlh-27-compat`，初始 redroid 与 tablet 容器此前已停止；两个本次代理进程也已结束。复查 `5555/5556/5557/8899` 没有本次监听。Docker stop 最后以 137 退出，属于主动停止本次容器，不应当作 Android 启动失败证据。专用 `data/`、`data-8042/`、AVD、SDK、CA 均保留，没有删除 owner 数据。
 
-本 PR 只提交三份文档；APK、原始崩溃日志、流量、探针和依赖保留在 `temp/` 或仓库外，没有提交 APK、Android data、媒体、key 值、CA 材料或 WeChat 账号。
+补测结束后也关闭了 scrcpy、再次停止 Redroid tablet，并停止 docker-android；复查 `5555/5556/5557/6080/8899` 无本次监听。Docker 的 `wx-dlh-docker-android-27` named volume 与专用容器保留，尚未解决其重启问题。
+
+本 PR 只提交四份文档；APK、原始崩溃日志、流量、探针和依赖保留在 `temp/` 或仓库外，没有提交 APK、Android data、媒体、key 值、CA 材料或 WeChat 账号。
 
 ### 下一步
 
-本次不需要 owner 扫码：客户端启动问题先于人工验证。若要继续 pad 路线，下一步应先提供或验证一个能稳定运行原版 WeChat 的 Android 13 + ARM64 环境（例如可用的 ARM64 测试主机），或单独确定 native translation 兼容性修复范围。不能用换内核来解释/解决已经成功启动的 binder，也不能因启动失败跳到「需要视频号 hook」的结论。容器化 Linux 客户端可作为 #26 的后续候选，但其 gateway 组合未在本 spike 实测，不能据 M0 自动宣布它通过。
+owner 可先按 [手动清单](redroid-manual-test.md) 亲自复查 Redroid；当前仍无必须扫码的稳定客户端，只有手动确认不再闪退后才进入登录。若要继续 pad 路线，下一步应先提供或验证一个能稳定运行原版 WeChat 的 Android 13 + ARM64 环境（例如可用的 ARM64 测试主机），或单独确定 native translation 兼容性修复范围。不能用换内核来解释/解决已经成功启动的 binder，也不能因启动失败跳到「需要视频号 hook」的结论。容器化 Linux 客户端可作为 #26 的后续候选，但其 gateway 组合未在本 spike 实测，不能据 M0 自动宣布它通过。
 
 后续一旦客户端能稳定启动，再交 owner 扫码，并由 owner 在 #27 回报：实际 WeChat 版本和设备参数组、手机登录设备列表是否显示 Android 平板、原电脑客户端是否仍在线；不要贴账号或二维码。只有步骤①通过，才继续一次视频播放及 AC4/AC5；不做无人值守或批量播放。
 

@@ -99,9 +99,9 @@
 
 ## Android 13 平板路线 spike（2026-10-12，登录前受阻）
 
-[#27](https://github.com/amyteq/at_wxclip/issues/27) 验证 Android 平板能否作为 [#26 gateway](https://github.com/amyteq/at_wxclip/issues/26) 的客户端。实测命令、镜像与 APK 校验值见 [runbook](redroid-pad-spike.md)。owner 已在 [#26 的提议](https://github.com/amyteq/at_wxclip/issues/26#issuecomment-6117208871) 确认设备槽规则：手机、平板、电脑各一台，同类只能同时在线一台；本次尚未通过 Android 登录实测确认设备类别。
+[#27](https://github.com/amyteq/at_wxclip/issues/27) 验证 Android 平板能否作为 [#26 gateway](https://github.com/amyteq/at_wxclip/issues/26) 的客户端。实测命令、镜像与 APK 校验值见 [runbook](redroid-pad-spike.md)，owner 亲自复查的步骤见 [Redroid 手动测试清单](redroid-manual-test.md)。owner 已在 [#26 的提议](https://github.com/amyteq/at_wxclip/issues/26#issuecomment-6117208871) 确认设备槽规则：手机、平板、电脑各一台，同类只能同时在线一台；本次尚未通过 Android 登录实测确认设备类别。
 
-- 步骤①：当前 `7.2.4-arch1-2` 的 Rust binder 能启动 redroid Android 13，ABI 包含 `arm64-v8a`。但官方 WeChat 8.0.79 在登录前崩溃，栈涉及 `libndk_translation.so` 与 `libowl.so`；关闭代理仍复现。默认、Lenovo（model 实际被截断）与 SM-X610 参数均未进入登录。官方 Android 13 Google APIs x86_64 AVD revision 17 能启动，但没有 ARM 翻译，APK 安装报 `INSTALL_FAILED_NO_MATCHING_ABIS`；官网 ARM32 兼容包 8.0.42 在独立 redroid data 上也因本地库 ABI 错误不能运行。
+- 步骤①：当前 `7.2.4-arch1-2` 的 Rust binder 能启动 redroid Android 13，ABI 包含 `arm64-v8a`。但官方 WeChat 8.0.79 在登录前崩溃，栈涉及 `libndk_translation.so` 与 `libowl.so`；关闭代理仍复现。默认、Lenovo（model 实际被截断）与 SM-X610 参数均未进入登录。官方 Android 13 Google APIs x86_64 AVD revision 17 能启动，但没有 ARM 翻译，APK 安装报 `INSTALL_FAILED_NO_MATCHING_ABIS`；官网 ARM32 兼容包 8.0.42 在独立 redroid data 上也因本地库 ABI 错误不能运行。owner 后续要求的 `budtmo/docker-android:emulator_13.0` / Pixel C 实测同样使用 r17 x86_64 guest，安装 8.0.79 明确报 ABI 不匹配；另观察到 6 GiB 上限下的 OOM 及镜像重启脚本错误，未进入登录。
 - 步骤②：尚未进入，不能据此断言 Android 视频号是否存在 H5 页面或 `WeixinJSBridge`。
 - 步骤③：尚未进入，没有获取 `decode_key`，也没有证明「只有 app hook 才能获取」，因此没有创建 hook 决策 issue。
 
