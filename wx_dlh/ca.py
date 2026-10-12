@@ -83,6 +83,42 @@ def ensure_ca(ca_dir: Path) -> Path:
 PRIVATE_KEY_PEM = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 
 
+def _one_asn1_value(der: bytes) -> bool:
+    """True when `der` is a single ASN.1 value with nothing after it.
+
+    Only the outer tag's length is read; whether what it holds is a certificate is
+    `_parse_x509`'s question, and it is asked first.
+    """
+    if len(der) < 2:
+        return False
+    length = der[1]
+    if length & 0x80:  # long form: the low seven bits count the length's own bytes
+        count = length & 0x7F
+        return len(der) == 2 + count + int.from_bytes(der[2 : 2 + count], "big")
+    return len(der) == 2 + length
+
+
+def _parse_x509(der: bytes) -> None:
+    """Raise ValueError unless `der` is one X.509 certificate and nothing besides.
+
+    The parser is OpenSSL's own, reached through `ssl`: `load_verify_locations` hands DER
+    straight to it without a file or a socket, and the context it fills is thrown away.
+    Going through the standard library rather than `cryptography` keeps mitmproxy the
+    only runtime dependency (AGENTS.md) - that `cryptography` comes in under mitmproxy today
+    is its choice to revisit, not ours to depend on.
+
+    OpenSSL reads `cadata` as a *list*, so a second certificate after the first would pass:
+    the length is checked too. Those bytes hash to neither CA, and `trust` would file them
+    as one anchor and print that fingerprint as the CA's.
+    """
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=der)
+    except (ssl.SSLError, ValueError) as exc:  # SSLError is an OSError: it must not escape
+        raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
+    if not _one_asn1_value(der):
+        raise ValueError("more than one certificate between the PEM delimiters; pass one")
+
+
 def cert_der(pem_text: str) -> bytes:
     """The DER bytes of one PEM certificate; ValueError when the text is not that.
 
@@ -93,8 +129,6 @@ def cert_der(pem_text: str) -> bytes:
 
     What the delimiters hold is parsed, not merely base64-decoded: a `BEGIN CERTIFICATE`
     block can wrap any bytes at all, and `trust` files what it is given as a trust anchor.
-    The parser is `cryptography`'s, which mitmproxy requires and `mitmproxy.certs` builds
-    this very CA with - so it is already installed, and nothing new is depended on.
     """
     if PRIVATE_KEY_PEM.search(pem_text):
         raise ValueError(
@@ -102,12 +136,7 @@ def cert_der(pem_text: str) -> bytes:
             f"pass the certificate-only {CA_BASENAME}-ca-cert.pem"
         )
     der = ssl.PEM_cert_to_DER_cert(pem_text.strip())
-    from cryptography.x509 import load_der_x509_certificate  # as in `ensure_ca`: not cheap
-
-    try:
-        load_der_x509_certificate(der)
-    except ValueError as exc:
-        raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
+    _parse_x509(der)
     return der
 
 

@@ -9,6 +9,7 @@ is the question only a real client answers (issue #11); nothing here claims it d
 
 from __future__ import annotations
 
+import base64
 import io
 import re
 import subprocess
@@ -235,6 +236,25 @@ def test_what_is_between_the_pem_delimiters_is_parsed_not_just_decoded(
     t.cert = tmp_path / name
     t.cert.write_bytes(content)
     with pytest.raises(TrustError, match=says):
+        t.apply("install", ["system", "user"])
+    assert not system.calls
+    assert not list((tmp_path / "anchors").iterdir())
+
+
+def test_two_certificates_in_one_block_are_refused(make, cert, stale, tmp_path):
+    """OpenSSL reads a PEM block as a list and takes the certificates in it one after the
+    other, so a second one hiding behind the first would pass the parse. The file is what
+    `--system` files as a single anchor, and its fingerprint - the one `--list` prints and
+    `--remove` searches by - would then be of bytes that are neither CA."""
+    both = ca.cert_der(cert[0].read_text()) + ca.cert_der(stale)
+    t, system, _ = make("linux", anchor_dirs=_anchors(tmp_path))
+    t.cert = tmp_path / "both.pem"
+    t.cert.write_text(
+        "-----BEGIN CERTIFICATE-----\n"
+        f"{base64.encodebytes(both).decode()}"
+        "-----END CERTIFICATE-----\n"
+    )
+    with pytest.raises(TrustError, match="more than one certificate"):
         t.apply("install", ["system", "user"])
     assert not system.calls
     assert not list((tmp_path / "anchors").iterdir())
@@ -577,6 +597,21 @@ def test_linux_system_remove_leaves_another_cas_anchor_where_it_is(make, cert, s
     assert not system.ran("sudo rm")
     assert "could not be read" in output()
     assert "nothing to remove" not in output()
+
+
+def test_linux_system_remove_fails_when_the_other_anchor_is_unreadable(make, cert, tmp_path):
+    """One anchor removed, the other unreadable: still a failure, as in the script. The
+    file left behind may hold this very CA, and nothing here can tell - a caller that
+    reads only the exit code would otherwise be told the CA is gone when it may not be."""
+    anchors = _anchors(tmp_path)
+    (tmp_path / "anchors" / "wxclip-ca.crt").write_text("not a certificate\n")
+    (tmp_path / "anchors" / "wx-dlh-ca.crt").write_text(cert[0].read_text())
+    t, system, output = make("linux", anchor_dirs=anchors)
+    assert not t.apply("remove", ["system"])
+    assert f"sudo rm -f {tmp_path / 'anchors' / 'wx-dlh-ca.crt'}" in system.calls
+    assert "wxclip-ca.crt" not in " ".join(system.ran("sudo rm"))  # it might be ours
+    assert "could not be read" in output()
+    assert "[system] removed" in output()
 
 
 def test_linux_system_list_names_the_anchor_it_found_and_whose_it_is(make, cert, stale, tmp_path):
