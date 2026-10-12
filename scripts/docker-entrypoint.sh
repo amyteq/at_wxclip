@@ -2,11 +2,12 @@
 # Entrypoint of the wx-dlh image: run `wx-dlh "$@"` as the user who owns the mounts.
 #
 # The container writes into host directories (the CA, captures, downloads), so it should
-# write as the host user, not as root. Rather than make everyone look up their uid, the
-# owner is read off the mounts themselves: the first of them that is not root-owned wins,
-# then WX_DLH_UID/WX_DLH_GID if set, then 1000. A directory Docker had to create (root-owned,
-# Linux only) is handed to that user. Docker Desktop on macOS and Windows maps ownership
-# for you, so there this mostly picks the right uid and changes nothing.
+# write as the host user, not as root. WX_DLH_UID/WX_DLH_GID name that user; rather than
+# make everyone look their uid up, leaving them unset reads it off the mounts instead -
+# the first of them that is not root-owned wins, and failing that 1000. A directory Docker
+# had to create (root-owned, Linux only) is handed to that user. Docker Desktop on macOS
+# and Windows maps ownership for you, so there this mostly picks the right uid and changes
+# nothing.
 set -eu
 
 dirs="$WX_DLH_CA_DIR $WX_DLH_CAPTURE_DIR $WX_DLH_DOWNLOAD_DIR $WX_DLH_PROCESS_DIR"

@@ -25,6 +25,20 @@ ENTRYPOINT = ROOT / "scripts" / "docker-entrypoint.sh"
 DATA_DIRS = {"CA": "ca", "CAPTURE": "captures", "DOWNLOAD": "downloads", "PROCESS": "processed"}
 #: Secrets that must stay out of the build context even below an allowlisted directory.
 SECRET_PATTERNS = ("**/.env*", "**/*.pem", "**/*.cer", "**/*.crt", "**/*.key", "**/*.p12")
+#: What a native run leaves under wx_dlh/ when a directory setting points at the package
+#: tree (`WX_DLH_CAPTURE_DIR=wx_dlh/captures`), plus the usual local debris. Git ignores
+#: every one of them, so the build context is the only thing keeping them off the builder.
+RUNTIME_OUTPUT = (
+    "wx_dlh/captures/events.jsonl",
+    "wx_dlh/captures/flows-20261012.mitm",
+    "wx_dlh/captures/pages/channels.html",
+    "wx_dlh/downloads/clip.mp4",
+    "wx_dlh/processed/clip/shot-001.png",
+    "wx_dlh/temp/scratch.txt",
+    "wx_dlh/ca/mitmproxy-ca.pem",
+    "wx_dlh/.env.local",
+    "wx_dlh/__pycache__/config.cpython-312.pyc",
+)
 #: What a Docker client with `proxies` configured injects into every container, both cases.
 PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 
@@ -36,6 +50,56 @@ def dockerignore() -> list[str]:
 
 def allowlisted() -> set[str]:
     return {line[1:].rstrip("/") for line in dockerignore() if line.startswith("!")}
+
+
+def tracked(path: str) -> list[str]:
+    """Everything Git has under `path`.
+
+    A working checkout holds more than this, and that untracked rest - scratch copies,
+    captures, a CA someone pointed at the package - is what must not reach the builder.
+    """
+    git = shutil.which("git")
+    if git is None or not (ROOT / ".git").exists():
+        pytest.skip("needs a Git checkout")
+    out = subprocess.run(
+        [git, "-C", str(ROOT), "ls-files", "-z", "--", path],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [name for name in out.stdout.split("\0") if name]
+
+
+def as_regex(pattern: str) -> re.Pattern[str]:
+    """One .dockerignore pattern: `*` and `?` stop at a separator, `**` crosses them."""
+    globs = (("**/", "(?:.*/)?"), ("**", ".*"), ("*", "[^/]*"), ("?", "[^/]"))
+    out, rest = "", pattern.rstrip("/")
+    while rest:
+        for prefix, translation in globs:
+            if rest.startswith(prefix):
+                out, rest = out + translation, rest[len(prefix) :]
+                break
+        else:
+            out, rest = out + re.escape(rest[0]), rest[1:]
+    return re.compile(f"{out}$")
+
+
+def context_takes(path: str) -> bool:
+    """Whether `path` reaches the builder.
+
+    Docker takes the last pattern matching the path *or any directory above it*: the
+    top-level `*` therefore drops whole trees, and only a later negation naming something
+    inside brings part of one back - which is how `!web/inject.js` gets in while
+    `web/README.md` does not. Checked against a real `docker build` (docs/docker.md).
+    """
+    parts = path.split("/")
+    candidates = ["/".join(parts[: depth + 1]) for depth in range(len(parts))]
+    verdict = True
+    for pattern in dockerignore():
+        regex = as_regex(pattern.removeprefix("!"))
+        if any(regex.match(candidate) for candidate in candidates):
+            verdict = pattern.startswith("!")
+    return verdict
 
 
 def wheel_inputs() -> list[str]:
@@ -59,11 +123,28 @@ def test_the_build_context_holds_the_entrypoint():
     assert "scripts/docker-entrypoint.sh" in allowlisted()
 
 
-def test_no_secret_rides_into_the_build_context_on_an_allowlisted_directory():
-    """`*` only matches the top level, so `!wx_dlh/` re-includes everything below it.
+def test_the_build_context_takes_the_package_and_nothing_else_below_it():
+    """`*` only matches the top level, so a bare `!wx_dlh/` hands the builder the whole
+    package tree - including the git-ignored output a native run can leave in it.
 
-    Docker applies the last matching pattern, which is why these have to come after the
-    negations: a CA directory or a .env under `wx_dlh/` is excluded again.
+    The allowlist is narrowed to the modules instead, which is only enough while the
+    package stays pure Python: a data file the wheel needs fails here rather than at
+    `docker compose build`, and anything else is excluded by construction.
+    """
+    package = tracked("wx_dlh")
+    assert package, "expected wx_dlh/ to be tracked"
+    refused = [path for path in package if not context_takes(path)]
+    assert not refused, f"the wheel needs these - widen .dockerignore: {refused}"
+    rode_in = [path for path in RUNTIME_OUTPUT if context_takes(path)]
+    assert not rode_in, f"git-ignored runtime output reaches the builder: {rode_in}"
+
+
+def test_no_secret_rides_into_the_build_context_on_an_allowlisted_directory():
+    """Docker applies the last matching pattern, which is why these come after every
+    negation: a CA directory or a .env below an allowlisted one is excluded again.
+
+    Redundant while the negations stay as narrow as they are now - this pins that a
+    broader one added later still cannot re-admit them.
     """
     patterns = dockerignore()
     last_negation = max(index for index, line in enumerate(patterns) if line.startswith("!"))

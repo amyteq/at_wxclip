@@ -108,7 +108,7 @@ docker compose run --rm cli --help
 
 ### 文件属主
 
-容器不以 root 写宿主机的目录。入口脚本取第一个不属于 root 的挂载目录的属主作为运行身份（通常就是你），都没有就用 `WX_DLH_UID`，再没有就是 1000；Docker 刚替你建出来、属于 root 的目录会交给这个用户。macOS / Windows 的 Docker Desktop 本来就会映射属主，这一步基本是空操作。
+容器不以 root 写宿主机的目录。运行身份由 `WX_DLH_UID` / `WX_DLH_GID` 指定；不设的话入口脚本取第一个不属于 root 的挂载目录的属主（通常就是你），再没有就是 1000。设了 `WX_DLH_UID` 就以它为准，挂载目录现在属于谁都不影响。Docker 刚替你建出来、属于 root 的目录会交给这个用户。macOS / Windows 的 Docker Desktop 本来就会映射属主，这一步基本是空操作。
 
 ## 已经在用原生安装 / 从 wxclip 升级
 
@@ -119,7 +119,7 @@ docker compose run --rm cli --help
 ## 安全
 
 - 端口默认只发布在 `127.0.0.1`。代理和面板都没有认证，别轻易改成 `0.0.0.0`。
-- CA 私钥（`mitmproxy-ca.pem`）留在宿主机的 CA 目录里，不进镜像、不进 Git。拿到它的人能对这台机器上信任它的程序做中间人。构建上下文是白名单，并且 `.env`、`*.pem`、`*.key`、`*.cer`、`*.p12` 这几条排在白名单之后（Docker 按最后一条匹配的规则算），所以就算有人把 CA 目录放到 `wx_dlh/` 底下，私钥也不会被送进构建。
+- CA 私钥（`mitmproxy-ca.pem`）留在宿主机的 CA 目录里，不进镜像、不进 Git。拿到它的人能对这台机器上信任它的程序做中间人。构建上下文是白名单，而且放行到文件一级：`wx_dlh/` 下只有 `*.py` 进得去（这个包是纯 Python，没有数据文件），所以就算有人把 CA 目录、抓取记录、flow 存档或下载的视频放在包目录底下（`WX_DLH_CAPTURE_DIR=wx_dlh/captures` 之类，Git 也看不见它们），构建器一样拿不到。`.env`、`*.pem`、`*.key`、`*.cer`、`*.p12` 这几条还排在所有白名单之后（Docker 按最后一条匹配的规则算）再兜一层，防的是以后有人加一条更宽的白名单。
 - **下载是直连 CDN 的，不经过代理。** 宿主机的 Docker 客户端如果在 `~/.docker/config.json` 里配了 `proxies`，它会往每个容器注入 `HTTP_PROXY` / `http_proxy` 这组变量，而 Python 的 urllib 默认就认这组变量；入口脚本在启动 wx-dlh 之前把它们清掉（`NO_PROXY` 不动，它只会让更多请求直连）。确实需要让容器出站走代理，就设 `WX_DLH_OUTBOUND_PROXY=http://主机:端口`，它会覆盖这组变量 —— 但别指向 wx-dlh 自己的代理：那个中间人代理是用来拿 URL 和 `decode_key` 的，不负责搬运媒体文件。
 - 镜像只在本地构建（`wx-dlh:local`），不推送到任何仓库。
 - 代理和原生版本一样会把 flow 存档写进 `captures/flows-*.mitm`；常驻运行时它会一直增长，不需要就在 `compose.yaml` 的 `proxy` 命令里加 `--no-save-flows`。`compose.yaml` 故意没有设 `restart:`：一个中间人代理在开机后悄悄自己起来，不该是默认行为。
@@ -135,7 +135,7 @@ docker compose run --rm cli --help
 - `docker compose stop` 不到 1 秒，代理正常收尾（打印统计、写完日志）。
 - 入口脚本：挂载目录属于其他 uid 时以那个 uid 运行，并接管 Docker 新建的 root 目录。
 - 代理变量：Docker 客户端配了 `proxies` 时容器里确实会出现 `HTTP_PROXY` / `http_proxy`（大小写都有）。清掉之前 `wx-dlh download` 连的是那个代理地址，清掉之后连的是 URL 里的主机名；设上 `WX_DLH_OUTBOUND_PROXY` 又会按要求走指定的代理。
-- 构建上下文：在 `wx_dlh/` 下放 `ca/mitmproxy-ca.pem`、`.env.local`、`client.key` 再构建，三个文件都没进 build 阶段的 `/src`（白名单补上这几条排除之前，三个都进去了）。
+- 构建上下文：在 `wx_dlh/` 下放 `ca/mitmproxy-ca.pem`、`.env.local`、`captures/events.jsonl`、`captures/flows-*.mitm`、`captures/pages/*.html`、`downloads/*.mp4`、`temp/`、`__pycache__/`、`_web/inject.js` 再构建，build 阶段的 `/src` 里只剩包的 `.py` 模块和白名单里的那几个文件，镜像照常构建、`import wx_dlh` 和三个 web 资源都正常（白名单收窄到 `wx_dlh/*.py` 之前，除了 `.pem` / `.env` 那两类，其余全都进去了）。`tests/test_docker.py` 里按同一套规则算出来的结果和真实构建逐个文件一致。
 
 没有验证的：
 
