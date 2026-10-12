@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from wxclip import postprocess
-from wxclip.extract import DETAIL_NAME, TEXT_NAME
-from wxclip.frames import MANIFEST_NAME, ShotSet
-from wxclip.summarize import SUMMARY_NAME, Summary
+from wx_dlh import postprocess
+from wx_dlh.extract import DETAIL_NAME, TEXT_NAME
+from wx_dlh.frames import MANIFEST_NAME, ShotSet
+from wx_dlh.summarize import SUMMARY_NAME, Summary
 
 OCR_TEXT = "价值 15999 元视觉效果\n开发者直接开源了\n"
 
@@ -15,8 +15,8 @@ OCR_TEXT = "价值 15999 元视觉效果\n开发者直接开源了\n"
 @pytest.fixture
 def ocr(monkeypatch, ffmpeg):
     """Faked tesseract on top of the faked ffmpeg, so a whole run needs no binaries."""
-    monkeypatch.setattr("wxclip.extract.have_tool", lambda name: True)
-    monkeypatch.setattr("wxclip.extract.ocr_image", lambda image, **kw: OCR_TEXT)
+    monkeypatch.setattr("wx_dlh.extract.have_tool", lambda name: True)
+    monkeypatch.setattr("wx_dlh.extract.ocr_image", lambda image, **kw: OCR_TEXT)
     return ffmpeg
 
 
@@ -32,7 +32,7 @@ def model(monkeypatch):
         entries = shots.shots if isinstance(shots, ShotSet) else tuple(shots)
         return Summary(text="## 一句话概要\n\n讲了一个开源项目。", images=len(entries))
 
-    monkeypatch.setattr("wxclip.summarize.summarize", fake)
+    monkeypatch.setattr("wx_dlh.summarize.summarize", fake)
     return calls
 
 
@@ -150,10 +150,10 @@ def test_a_subtitle_stream_is_pointed_out_rather_than_silently_ignored(
 ):
     """No Channels download has had one; if one does, OCR is doing by hand what a stream
     copy would do exactly, and the operator should hear about it."""
-    from wxclip.media import MediaInfo
+    from wx_dlh.media import MediaInfo
 
     monkeypatch.setattr(
-        "wxclip.postprocess.probe",
+        "wx_dlh.postprocess.probe",
         lambda path, **kw: MediaInfo(
             path=path,
             duration=7.5,

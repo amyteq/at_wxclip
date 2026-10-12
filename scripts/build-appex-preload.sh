@@ -3,14 +3,14 @@
 # WeChat Flatpak sandbox can actually see it.
 #
 # The sandbox only maps the subpaths of ~/.var/app/<app-id>/ that flatpak is told to
-# persist, so the library goes into .wxclip/ and we add --persist=.wxclip. Inside the
-# sandbox that same file appears as $HOME/.wxclip/<name>, which is the path LD_PRELOAD
+# persist, so the library goes into .wx-dlh/ and we add --persist=.wx-dlh. Inside the
+# sandbox that same file appears as $HOME/.wx-dlh/<name>, which is the path LD_PRELOAD
 # has to name.
 set -euo pipefail
 
-APP_ID="${WXCLIP_FLATPAK_APP_ID:-com.tencent.WeChat}"
+APP_ID="${WX_DLH_FLATPAK_APP_ID:-com.tencent.WeChat}"
 SRC="$(cd "$(dirname "$0")" && pwd)/appex-flags-preload.c"
-SO_NAME="libwxclip-appex-flags.so"
+SO_NAME="libwx-dlh-appex-flags.so"
 OUT=""
 
 while [ $# -gt 0 ]; do
@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-host_dir="$HOME/.var/app/$APP_ID/.wxclip"
+host_dir="$HOME/.var/app/$APP_ID/.wx-dlh"
 [ -n "$OUT" ] || OUT="$host_dir/$SO_NAME"
 
 command -v cc >/dev/null 2>&1 || { echo "no C compiler (cc) found" >&2; exit 1; }
@@ -44,9 +44,9 @@ if command -v objdump >/dev/null 2>&1; then
   echo "needs at most $need"
 fi
 
-if command -v flatpak >/dev/null 2>&1 && [ -z "${WXCLIP_SKIP_OVERRIDE:-}" ]; then
-  flatpak override --user "$APP_ID" --persist=.wxclip
-  echo "[flatpak:$APP_ID] ~/.var/app/$APP_ID/.wxclip is now persisted into the sandbox"
+if command -v flatpak >/dev/null 2>&1 && [ -z "${WX_DLH_SKIP_OVERRIDE:-}" ]; then
+  flatpak override --user "$APP_ID" --persist=.wx-dlh
+  echo "[flatpak:$APP_ID] ~/.var/app/$APP_ID/.wx-dlh is now persisted into the sandbox"
 fi
 
-echo "sandbox path for LD_PRELOAD: \$HOME/.wxclip/$SO_NAME"
+echo "sandbox path for LD_PRELOAD: \$HOME/.wx-dlh/$SO_NAME"

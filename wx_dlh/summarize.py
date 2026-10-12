@@ -11,8 +11,8 @@ a summary of some noisy text.
 **Why this posts JSON itself instead of using the `anthropic` SDK.** The SDK would be the
 normal choice, and it was tried first. It cannot be installed beside mitmproxy: it needs
 `httpx2` -> `httpcore2` -> `h11>=0.16`, and mitmproxy pins `h11` below that, so
-`uv pip install '.[proxy,summarize]'` has no solution. Since `wxclip capture` needs
-mitmproxy, taking the SDK would mean `wxclip process` could not run in the same virtualenv
+`uv pip install '.[proxy,summarize]'` has no solution. Since `wx-dlh capture` needs
+mitmproxy, taking the SDK would mean `wx-dlh process` could not run in the same virtualenv
 as the command that produces the files it processes - two environments for one tool. The
 alternative, pinning `anthropic<1`, means writing against a superseded major whose request
 surface for `effort` is not the current one.
@@ -24,7 +24,7 @@ is less code than either of those, and it keeps the whole tool installable as on
 If mitmproxy ever loosens that pin, this is about thirty lines to replace with the SDK.
 
 Credentials come from the environment the same way the SDK would read them:
-`ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN` for an OAuth token. wxclip does not store
+`ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN` for an OAuth token. wx-dlh does not store
 or log either one.
 """
 
@@ -41,8 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from wxclip.frames import Shot, ShotSet
-from wxclip.media import FFMPEG, MediaInfo, Runner, run_default, run_tool
+from wx_dlh.frames import Shot, ShotSet
+from wx_dlh.media import FFMPEG, MediaInfo, Runner, run_default, run_tool
 
 API_URL = "https://api.anthropic.com/v1/messages"
 
@@ -81,7 +81,7 @@ NO_CREDENTIALS = (
     "no Anthropic credentials in the environment. Set one of:\n"
     "  export ANTHROPIC_API_KEY=sk-ant-...      # an API key\n"
     "  export ANTHROPIC_AUTH_TOKEN=...          # an OAuth token\n"
-    "`.env` is read too, so WXCLIP's own file can hold it - it is git-ignored."
+    "`.env` is read too, so wx-dlh's own file can hold it - it is git-ignored."
 )
 
 #: The prompt. It lives here rather than in `evals/` so that an installed wheel carries
@@ -151,7 +151,7 @@ def encode_image(
         raise SummarizeError(f"{path} is not a file")
     data = path.read_bytes()
     if width:
-        with tempfile.TemporaryDirectory(prefix="wxclip-img-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="wx-dlh-img-") as tmp:
             smaller = Path(tmp) / "small.jpg"
             run_tool(
                 FFMPEG,
@@ -329,7 +329,7 @@ def summarize(
     env: dict[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     #: Resolved at call time rather than bound as a default, so replacing
-    #: `wxclip.summarize.post_messages` works - which is how a caller that does not
+    #: `wx_dlh.summarize.post_messages` works - which is how a caller that does not
     #: thread this parameter through, the CLI included, gets tested without a network.
     post: Callable[..., dict] | None = None,
     run: Runner = run_default,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install, list or remove the wxclip proxy CA in the trust stores WeChat reads.
+# Install, list or remove the wx-dlh proxy CA in the trust stores WeChat reads.
 #
 # WeChat renders Channels pages in a Chromium-based webview (RadiumWMPF/WeChatAppEx), and
 # Chromium on Linux takes user-added roots from a NSS database, not from OpenSSL's. Which
@@ -17,10 +17,11 @@
 # Restart WeChat after a change - the store is read at startup.
 set -euo pipefail
 
-CERT="${WXCLIP_CA_DIR:-$HOME/.config/wxclip/ca}/mitmproxy-ca-cert.pem"
-APP_ID="${WXCLIP_FLATPAK_APP_ID:-com.tencent.WeChat}"
-NICKNAME="wxclip-ca"
-ANCHOR="/etc/ca-certificates/trust-source/anchors/wxclip-ca.crt"
+CERT="${WX_DLH_CA_DIR:-$HOME/.config/wx-dlh/ca}/mitmproxy-ca-cert.pem"
+APP_ID="${WX_DLH_FLATPAK_APP_ID:-com.tencent.WeChat}"
+NICKNAME="wx-dlh-ca"
+LEGACY_NICKNAME="wxclip-ca"  # before the rename; the same CA moves over, so clear it too
+ANCHOR="/etc/ca-certificates/trust-source/anchors/wx-dlh-ca.crt"
 ACTION="add"
 TARGETS=()
 
@@ -35,7 +36,7 @@ With no target, every store that this machine has is used, except --system (sudo
   --system    /etc/ca-certificates/trust-source/anchors via update-ca-trust (sudo)
   --remove    take the certificate back out
   --list      show what is installed where
-  --cert      certificate to install (default: $WXCLIP_CA_DIR/mitmproxy-ca-cert.pem)
+  --cert      certificate to install (default: $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem)
 USAGE
 }
 
@@ -71,7 +72,7 @@ fi
 
 if [ "$ACTION" != "list" ] && [ ! -f "$CERT" ]; then
   echo "certificate not found: $CERT" >&2
-  echo "create it first:  .venv/bin/python -m wxclip ca" >&2
+  echo "create it first:  .venv/bin/python -m wx_dlh ca" >&2
   exit 1
 fi
 
@@ -91,6 +92,7 @@ nss_apply() {
       mkdir -p "$db"
       [ -f "$db/cert9.db" ] || certutil -d "sql:$db" -N --empty-password
       certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1 || true
+      certutil -d "sql:$db" -D -n "$LEGACY_NICKNAME" >/dev/null 2>&1 || true
       certutil -d "sql:$db" -A -t "C,," -n "$NICKNAME" -i "$CERT"
       echo "[$label] installed in $db"
       ;;
@@ -103,6 +105,7 @@ nss_apply() {
       fi
       ;;
     remove)
+      certutil -d "sql:$db" -D -n "$LEGACY_NICKNAME" >/dev/null 2>&1 || true
       if certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1; then
         echo "[$label] removed from $db"
       else
@@ -111,7 +114,7 @@ nss_apply() {
       ;;
     list)
       echo "[$label] $db"
-      certutil -d "sql:$db" -L 2>/dev/null | grep -E "^$NICKNAME|Certificate Nickname" || echo "  (not installed)"
+      certutil -d "sql:$db" -L 2>/dev/null | grep -E "^($NICKNAME|$LEGACY_NICKNAME)|Certificate Nickname" || echo "  (not installed)"
       ;;
   esac
 }

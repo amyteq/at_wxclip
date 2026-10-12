@@ -1,6 +1,6 @@
 # 项目背景
 
-来源：https://github.com/amyteq/at_wxclip/discussions/2 （wxclip 项目介绍）
+来源：https://github.com/amyteq/at_wxclip/discussions/2 （项目介绍；讨论里用的是旧名 wxclip）
 
 ## 参考
 

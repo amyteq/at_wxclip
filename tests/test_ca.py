@@ -2,7 +2,7 @@
 
 import pytest
 
-from wxclip import ca
+from wx_dlh import ca
 
 
 def test_file_names_are_the_ones_mitmproxy_looks_for(tmp_path):
@@ -45,3 +45,55 @@ def test_flatpak_nssdb_is_inside_the_sandbox_home():
         ".pki",
         "nssdb",
     )
+
+
+def _make_ca(ca_dir, body="pem"):
+    ca_dir.mkdir(parents=True)
+    ca.cert_path(ca_dir).write_text(body)
+    ca.key_path(ca_dir).write_text(body + "+key")
+
+
+def test_a_ca_made_before_the_rename_moves_over_unchanged(tmp_path):
+    legacy, new = tmp_path / "wxclip" / "ca", tmp_path / "wx-dlh" / "ca"
+    _make_ca(legacy, "old")
+    assert ca.adopt_legacy_ca(new) == legacy
+    assert ca.cert_path(new).read_text() == "old"
+    assert ca.key_path(new).read_text() == "old+key"
+    # an older checkout still finds the same pair rather than minting a new one
+    assert legacy.is_symlink()
+    assert ca.cert_path(legacy).read_text() == "old"
+    assert ca.adopt_legacy_ca(new) is None
+
+
+def test_an_empty_new_directory_does_not_block_the_move(tmp_path):
+    _make_ca(tmp_path / "wxclip" / "ca", "old")
+    (tmp_path / "wx-dlh" / "ca").mkdir(parents=True)
+    assert ca.adopt_legacy_ca(tmp_path / "wx-dlh" / "ca") is not None
+    assert ca.cert_path(tmp_path / "wx-dlh" / "ca").read_text() == "old"
+
+
+def test_a_ca_already_under_the_new_name_wins(tmp_path):
+    _make_ca(tmp_path / "wxclip" / "ca", "old")
+    _make_ca(tmp_path / "wx-dlh" / "ca", "new")
+    assert ca.adopt_legacy_ca(tmp_path / "wx-dlh" / "ca") is None
+    assert ca.cert_path(tmp_path / "wx-dlh" / "ca").read_text() == "new"
+    assert ca.cert_path(tmp_path / "wxclip" / "ca").read_text() == "old"
+
+
+def test_only_the_default_layout_adopts_anything(tmp_path):
+    _make_ca(tmp_path / "wxclip" / "ca", "old")
+    assert ca.adopt_legacy_ca(tmp_path / "custom") is None
+    assert ca.adopt_legacy_ca(tmp_path / "wx-dlh" / "ca") is not None
+
+
+def test_nothing_to_adopt_is_not_an_error(tmp_path):
+    assert ca.adopt_legacy_ca(tmp_path / "wx-dlh" / "ca") is None
+    assert not (tmp_path / "wx-dlh").exists()
+
+
+def test_a_non_empty_new_directory_is_left_alone(tmp_path):
+    _make_ca(tmp_path / "wxclip" / "ca", "old")
+    (tmp_path / "wx-dlh" / "ca").mkdir(parents=True)
+    (tmp_path / "wx-dlh" / "ca" / "unrelated").write_text("x")
+    assert ca.adopt_legacy_ca(tmp_path / "wx-dlh" / "ca") is None
+    assert ca.cert_path(tmp_path / "wxclip" / "ca").is_file()

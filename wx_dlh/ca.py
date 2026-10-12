@@ -7,6 +7,7 @@ key never belongs in the repo: the default location is outside it.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -29,6 +30,41 @@ def cert_path(ca_dir: Path) -> Path:
 def key_path(ca_dir: Path) -> Path:
     """Certificate *and* private key - never leaves this machine."""
     return Path(ca_dir) / f"{CA_BASENAME}-ca.pem"
+
+
+#: The directory name the CA lived under before the project was renamed to wx-dlh (#11).
+LEGACY_DIR_NAME = "wxclip"
+
+
+def adopt_legacy_ca(ca_dir: Path) -> Path | None:
+    """Move a CA made before the rename into `ca_dir`; return where it came from.
+
+    A CA in use is already trusted, and on Linux its SPKI is pinned in the webview's
+    flatpak override. Generating a fresh one under the new name would break
+    interception without a word, so the old pair moves over instead - same files, same
+    key. Only `<config>/wx-dlh/ca` adopts its `<config>/wxclip/ca` sibling, and only
+    while it holds no certificate of its own.
+
+    The old path is left as a symlink to the new one: a checkout from before the rename
+    would otherwise find no CA there and quietly mint a new one, which the pinned SPKI
+    no longer matches.
+    """
+    ca_dir = Path(ca_dir).expanduser()
+    if ca_dir.parts[-2:] != ("wx-dlh", "ca") or cert_path(ca_dir).exists():
+        return None
+    legacy = ca_dir.parent.parent / LEGACY_DIR_NAME / "ca"
+    if not cert_path(legacy).is_file():
+        return None
+    if ca_dir.exists():
+        try:
+            ca_dir.rmdir()  # an empty directory is safe to replace; anything else is not
+        except OSError:
+            return None
+    ca_dir.parent.mkdir(parents=True, exist_ok=True)
+    legacy.rename(ca_dir)
+    with contextlib.suppress(OSError):  # no symlinks (e.g. unprivileged Windows): just moved
+        legacy.symlink_to(ca_dir, target_is_directory=True)
+    return legacy
 
 
 def ensure_ca(ca_dir: Path) -> Path:

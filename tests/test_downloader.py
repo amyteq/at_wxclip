@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from wxclip.downloader import (
+from wx_dlh.downloader import (
     DownloadError,
     Progress,
     download,
@@ -22,7 +22,7 @@ from wxclip.downloader import (
     parse_size,
     suggest_filename,
 )
-from wxclip.keystream import HEAD_BYTES, keystream
+from wx_dlh.keystream import HEAD_BYTES, keystream
 
 KEY = "1234567890"
 MP4_HEAD = b"\x00\x00\x00\x20ftypisom"

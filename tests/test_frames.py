@@ -5,7 +5,7 @@ import json
 import pytest
 
 from tests.conftest import SCENE_OUTPUT
-from wxclip.frames import (
+from wx_dlh.frames import (
     STRATEGY_EVEN,
     STRATEGY_INTERVAL,
     STRATEGY_SCENE,
@@ -21,7 +21,7 @@ from wxclip.frames import (
     take_shots,
     write_manifest,
 )
-from wxclip.media import MediaError, MediaInfo
+from wx_dlh.media import MediaError, MediaInfo
 
 
 def info(duration=7.476, **kw):

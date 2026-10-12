@@ -1,4 +1,4 @@
-"""wxclip: capture, download and decrypt WeChat Channels videos.
+"""wx-dlh: capture, download and decrypt WeChat Channels videos.
 
 The media URL comes straight from the WeChat JSAPI response; nothing resolves it.
 What needs decrypting is the downloaded file: its first 128 KiB are XORed with an

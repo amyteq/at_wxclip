@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch the WeChat Flatpak with proxy environment variables set, so the *webview* uses
-# the wxclip proxy too.
+# the wx-dlh proxy too.
 #
 # Why this exists: WeChat's in-app proxy setting only covers its main process. The
 # Channels page runs in a separate Chromium-based process (RadiumWMPF/WeChatAppEx) that
@@ -18,10 +18,10 @@
 # WeChat has to be fully quit first: env vars only apply to a fresh process tree.
 set -euo pipefail
 
-APP_ID="${WXCLIP_FLATPAK_APP_ID:-com.tencent.WeChat}"
-PROXY="${WXCLIP_PROXY:-http://127.0.0.1:8899}"
-CA_PEM="${WXCLIP_CA_CERT:-$HOME/.config/wxclip/ca/mitmproxy-ca-cert.pem}"
-SO_NAME="libwxclip-appex-flags.so"
+APP_ID="${WX_DLH_FLATPAK_APP_ID:-com.tencent.WeChat}"
+PROXY="${WX_DLH_PROXY:-http://127.0.0.1:8899}"
+CA_PEM="${WX_DLH_CA_CERT:-$HOME/.config/wx-dlh/ca/mitmproxy-ca-cert.pem}"
+SO_NAME="libwx-dlh-appex-flags.so"
 KILL=0
 BACKGROUND=0
 ACTION="run"
@@ -51,7 +51,7 @@ usage: scripts/run-wechat-proxied.sh [--proxy URL] [--app-id ID] [options]
                  load H5 pages such as 视频号
   --reset        drop the override again
   --ca-cert PEM  CA whose public key the webview should accept
-                 (default ~/.config/wxclip/ca/mitmproxy-ca-cert.pem)
+                 (default ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
 USAGE
       exit 0
       ;;
@@ -73,24 +73,24 @@ spki_hash() {
 # still get applied.
 appex_env_args() {
   if [ ! -f "$CA_PEM" ]; then
-    echo "no CA at $CA_PEM - run: .venv/bin/python -m wxclip ca" >&2
+    echo "no CA at $CA_PEM - run: .venv/bin/python -m wx_dlh ca" >&2
     echo "continuing without the webview switch; H5 pages will fail to load" >&2
     return 0
   fi
-  local so="$HOME/.var/app/$APP_ID/.wxclip/$SO_NAME"
+  local so="$HOME/.var/app/$APP_ID/.wx-dlh/$SO_NAME"
   if [ ! -f "$so" ]; then
     echo "building the preload shim ..." >&2
     "$(dirname "$0")/build-appex-preload.sh" --app-id "$APP_ID" >&2
   fi
   # HOME inside the sandbox is the same path as on the host; only the contents differ.
-  printf '%s\n' "--env=LD_PRELOAD=$HOME/.wxclip/$SO_NAME" \
-    "--env=WXCLIP_APPEX_FLAGS=--ignore-certificate-errors-spki-list=$(spki_hash "$CA_PEM")"
+  printf '%s\n' "--env=LD_PRELOAD=$HOME/.wx-dlh/$SO_NAME" \
+    "--env=WX_DLH_APPEX_FLAGS=--ignore-certificate-errors-spki-list=$(spki_hash "$CA_PEM")"
 }
 
 if [ "$ACTION" = "reset" ]; then
   flatpak override --user --reset "$APP_ID"
   echo "override cleared for $APP_ID - restart WeChat to go back to a direct connection"
-  echo "note: this also drops --persist=.pki and --persist=.wxclip, so the app stops"
+  echo "note: this also drops --persist=.pki and --persist=.wx-dlh, so the app stops"
   echo "      seeing the CA database and the preload shim."
   echo "      re-run scripts/trust-ca.sh when you want to intercept it again."
   flatpak override --user --show "$APP_ID" || true
@@ -100,7 +100,7 @@ fi
 host_port="${PROXY#*://}"
 if ! (exec 3<>"/dev/tcp/${host_port%%:*}/${host_port##*:}") 2>/dev/null; then
   echo "nothing is listening on $PROXY - start it first:" >&2
-  echo "  .venv/bin/python -m wxclip proxy" >&2
+  echo "  .venv/bin/python -m wx_dlh proxy" >&2
   exit 1
 fi
 echo "proxy reachable: $PROXY"

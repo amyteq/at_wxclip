@@ -2,14 +2,14 @@
 
 import pytest
 
-from wxclip.decrypt import (
+from wx_dlh.decrypt import (
     HEAD_SAMPLE,
     HeadDecryptor,
     decrypt_file,
     decrypt_in_place,
     looks_like_mp4,
 )
-from wxclip.keystream import HEAD_BYTES, KeystreamError, keystream
+from wx_dlh.keystream import HEAD_BYTES, KeystreamError, keystream
 
 KEY = "1234567890"
 MP4_HEAD = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00"

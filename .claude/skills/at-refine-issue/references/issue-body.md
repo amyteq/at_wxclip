@@ -122,7 +122,7 @@ A criterion is finished when someone who was not in the conversation can decide 
 | The skill is well documented | The README documents the invocation, both arguments, and their defaults; `SKILL.md` frontmatter sets `argument-hint` and `disable-model-invocation: false` |
 | Handles errors properly | A missing or ambiguous target produces a question and zero state-changing remote calls |
 | Tests pass | `<repository check>` passes, and the result is recorded in the PR with the command and counts |
-| The decrypt path still works | `wxclip decrypt` on the recorded fixture reproduces the expected sha256, with `decode_key` passed as a string and the first 128 KiB compared byte for byte |
+| The decrypt path still works | `wx-dlh decrypt` on the recorded fixture reproduces the expected sha256, with `decode_key` passed as a string and the first 128 KiB compared byte for byte |
 | Good validation | The recorded scenario matrix covers the listed cases, each with input, observed output, and a pass/fail line |
 
 Numbering is a contract. `AC3` means the same thing in revision 1 and revision 4; a new criterion is appended as `ACn+1`, and a withdrawn one stays in place marked `(withdrawn, revision R)`. Renumbering breaks every comment, PR, and report that cited the old number.

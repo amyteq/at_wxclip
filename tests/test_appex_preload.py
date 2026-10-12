@@ -22,7 +22,7 @@ def shim(tmp_path_factory):
     compiler = shutil.which("cc") or shutil.which("gcc")
     if compiler is None:
         pytest.skip("no C compiler available")
-    out = tmp_path_factory.mktemp("shim") / "libwxclip-appex-flags.so"
+    out = tmp_path_factory.mktemp("shim") / "libwx-dlh-appex-flags.so"
     build = [compiler, "-O1", "-fPIC", "-shared", "-Wall", "-Werror"]
     subprocess.run([*build, "-o", str(out), str(SOURCE), "-ldl"], check=True, capture_output=True)
     return out
@@ -33,7 +33,7 @@ def run_through_exec(shim, program: Path, argv: list[str], **env_overrides) -> s
     env = {
         "PATH": "/usr/bin:/bin",
         "LD_PRELOAD": str(shim),
-        "WXCLIP_APPEX_FLAGS": FLAGS,
+        "WX_DLH_APPEX_FLAGS": FLAGS,
     }
     env.update({k: v for k, v in env_overrides.items() if v is not None})
     for key, value in env_overrides.items():
@@ -78,10 +78,10 @@ def test_a_flag_already_on_the_command_line_is_not_duplicated(shim, echo_as):
 
 
 def test_no_flags_configured_means_no_rewrite(shim, echo_as):
-    out = run_through_exec(shim, echo_as("WeChatAppEx"), ["hello"], WXCLIP_APPEX_FLAGS=None)
+    out = run_through_exec(shim, echo_as("WeChatAppEx"), ["hello"], WX_DLH_APPEX_FLAGS=None)
     assert out == "hello"
 
 
 def test_the_target_program_name_is_configurable(shim, echo_as):
-    out = run_through_exec(shim, echo_as("Radium"), ["hello"], WXCLIP_APPEX_TARGET="Radium")
+    out = run_through_exec(shim, echo_as("Radium"), ["hello"], WX_DLH_APPEX_TARGET="Radium")
     assert out == f"hello {FLAGS}"

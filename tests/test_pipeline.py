@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from wxclip.capture import Media, parse_event
-from wxclip.downloader import DownloadResult
-from wxclip.pipeline import (
+from wx_dlh.capture import Media, parse_event
+from wx_dlh.downloader import DownloadResult
+from wx_dlh.pipeline import (
     CaptureRunner,
     media_from_log,
     newest_capture_log,

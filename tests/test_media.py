@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from tests.conftest import PROBE_OUTPUT, FakeRunner
-from wxclip.media import (
+from wx_dlh.media import (
     FFMPEG,
     FFPROBE,
     MediaError,

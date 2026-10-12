@@ -55,7 +55,7 @@ async function poll() {
     state = await response.json();
     showError("");
   } catch (err) {
-    showError(`读不到面板状态：${err.message}。wxclip serve 还在跑吗？`);
+    showError(`读不到面板状态：${err.message}。wx-dlh serve 还在跑吗？`);
     schedule(POLL_IDLE);
     return;
   }
@@ -87,7 +87,7 @@ function renderStatus(state) {
 
   el("media-count").textContent = state.media.length;
   el("file-count").textContent = state.downloads.filter((f) => !f.partial).length;
-  el("version").textContent = `wxclip ${state.version}`;
+  el("version").textContent = `wx-dlh ${state.version}`;
   el("capture-dir").textContent = state.capture_dir;
   el("log-count").textContent = state.logs.length ? `（${state.logs.length} 份日志）` : "（还没有日志）";
   el("download-dir").textContent = state.download_dir;

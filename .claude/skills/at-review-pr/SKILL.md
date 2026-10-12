@@ -7,7 +7,7 @@ disable-model-invocation: false
 
 # PR review loop
 
-Coordinate the loop; delegate review and writing to separate fresh sessions. This is repository development tooling: it orchestrates sessions and publishes reports, and the skill itself adds no runtime code to `wxclip/` or `web/`. The writer phase it launches is a different matter — within the approved scope that session edits the source, tests, and documentation of the PR under review, and commits and pushes to that PR's head branch when authorized.
+Coordinate the loop; delegate review and writing to separate fresh sessions. This is repository development tooling: it orchestrates sessions and publishes reports, and the skill itself adds no runtime code to `wx_dlh/` or `web/`. The writer phase it launches is a different matter — within the approved scope that session edits the source, tests, and documentation of the PR under review, and commits and pushes to that PR's head branch when authorized.
 
 ## Inputs and preflight
 

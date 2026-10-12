@@ -52,7 +52,7 @@ class Settings:
     #: Where post-processing puts a clip's stills, transcript and summary - one
     #: directory per clip. Separate from `download_dir` so the videos stay a flat list.
     process_dir: Path = Path("processed")
-    ca_dir: Path = Path.home() / ".config" / "wxclip" / "ca"
+    ca_dir: Path = Path.home() / ".config" / "wx-dlh" / "ca"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None, dotenv: Path | None = None) -> Settings:
@@ -71,12 +71,12 @@ class Settings:
                 raise ValueError(f"{name} must be a port number, got {raw!r}") from exc
 
         return cls(
-            proxy_host=merged.get("WXCLIP_PROXY_HOST") or DEFAULT_PROXY_HOST,
-            proxy_port=port("WXCLIP_PROXY_PORT", DEFAULT_PROXY_PORT),
-            server_host=merged.get("WXCLIP_SERVER_HOST") or DEFAULT_SERVER_HOST,
-            server_port=port("WXCLIP_SERVER_PORT", DEFAULT_SERVER_PORT),
-            download_dir=Path(merged.get("WXCLIP_DOWNLOAD_DIR") or "downloads"),
-            capture_dir=Path(merged.get("WXCLIP_CAPTURE_DIR") or "captures"),
-            process_dir=Path(merged.get("WXCLIP_PROCESS_DIR") or "processed"),
-            ca_dir=Path(merged.get("WXCLIP_CA_DIR") or _config_home(merged) / "wxclip" / "ca"),
+            proxy_host=merged.get("WX_DLH_PROXY_HOST") or DEFAULT_PROXY_HOST,
+            proxy_port=port("WX_DLH_PROXY_PORT", DEFAULT_PROXY_PORT),
+            server_host=merged.get("WX_DLH_SERVER_HOST") or DEFAULT_SERVER_HOST,
+            server_port=port("WX_DLH_SERVER_PORT", DEFAULT_SERVER_PORT),
+            download_dir=Path(merged.get("WX_DLH_DOWNLOAD_DIR") or "downloads"),
+            capture_dir=Path(merged.get("WX_DLH_CAPTURE_DIR") or "captures"),
+            process_dir=Path(merged.get("WX_DLH_PROCESS_DIR") or "processed"),
+            ca_dir=Path(merged.get("WX_DLH_CA_DIR") or _config_home(merged) / "wx-dlh" / "ca"),
         )

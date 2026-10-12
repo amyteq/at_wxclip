@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from wxclip.config import Settings
-from wxclip.downloader import DownloadResult
-from wxclip.server import Dashboard, make_server, parse_byte_range
+from wx_dlh.config import Settings
+from wx_dlh.downloader import DownloadResult
+from wx_dlh.server import Dashboard, make_server, parse_byte_range
 
 KEY = "1234567890"
 #: The key from the background notes: 20 digits, and a float rounds it to
@@ -184,7 +184,7 @@ def test_state_reports_a_proxy_that_is_not_running(panel):
     proxy = panel().state()["proxy"]
     assert proxy["listening"] is False
     assert proxy["port"] == CLOSED_PORT
-    assert "wxclip proxy" in proxy["command"]
+    assert "wx-dlh proxy" in proxy["command"]
 
 
 def test_an_empty_capture_directory_is_not_an_error(panel):
@@ -230,7 +230,7 @@ def test_the_page_and_its_script_are_served_with_a_charset(panel):
     status, headers, body = live.get("/")
     assert status == 200
     assert headers["content-type"] == "text/html; charset=utf-8"
-    assert b"wxclip" in body
+    assert b"wx-dlh" in body
 
     status, headers, body = live.get("/dashboard.js")
     assert status == 200

@@ -9,7 +9,7 @@ relitigated as a bug later:
 * **The picture is where the content is.** The M0 sample is a news card: a headline
   across the top, a small inner video, and a full paragraph of body text below it. The
   clip *is* text. OCR does not approximate the content of a video like that, it reads it.
-* **It costs nothing extra.** The stills already exist - `wxclip shots` took them - so
+* **It costs nothing extra.** The stills already exist - `wx-dlh shots` took them - so
   extraction is one `tesseract` call per still, with no second decode of the video, no
   model download, and no Python dependency.
 
@@ -32,8 +32,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from wxclip.frames import Shot, ShotSet
-from wxclip.media import MediaError, Runner, find_tool, have_tool, run_default, run_tool
+from wx_dlh.frames import Shot, ShotSet
+from wx_dlh.media import MediaError, Runner, find_tool, have_tool, run_default, run_tool
 
 TESSERACT = "tesseract"
 
@@ -311,7 +311,7 @@ def write_text(extraction: Extraction, out_dir: Path) -> tuple[Path, Path]:
 
 
 def check_tesseract(lang: str = DEFAULT_LANG) -> str:
-    """Report whether OCR can run at all, for `wxclip extract --check`."""
+    """Report whether OCR can run at all, for `wx-dlh extract --check`."""
     if not have_tool(TESSERACT):
         return MISSING_TESSERACT
     binary = find_tool(TESSERACT)

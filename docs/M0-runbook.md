@@ -1,6 +1,6 @@
 # M0 操作步骤（Linux / Arch，WeChat 4.0.1.11）
 
-M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视频号是不是还走那条可注入的 H5 路径**。代理、CA、注入脚本已经就绪（`wxclip proxy`），剩下的是需要真人操作的部分：让 WeChat 信任 CA、把代理设上、登录、播一个视频号视频。
+M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视频号是不是还走那条可注入的 H5 路径**。代理、CA、注入脚本已经就绪（`wx-dlh proxy`），剩下的是需要真人操作的部分：让 WeChat 信任 CA、把代理设上、登录、播一个视频号视频。
 
 ## 结论：两个问题都是「能」（2026-09-11 15:01 实测通过）
 
@@ -38,13 +38,13 @@ M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视�
 ## 1. 准备 CA（已做，可重复执行）
 
 ```bash
-.venv/bin/python -m wxclip ca          # 生成 CA 并打印证书路径、指纹、可用的信任位置
+.venv/bin/python -m wx_dlh ca          # 生成 CA 并打印证书路径、指纹、可用的信任位置
 scripts/trust-ca.sh                    # 装进自动探测到的 NSS 库（Flatpak 沙箱优先）
 scripts/trust-ca.sh --list             # 看装在哪了
 scripts/trust-ca.sh --remove           # 撤销
 ```
 
-CA 默认在 `~/.config/wxclip/ca/`（**不在仓库里**，因为带私钥）。`WXCLIP_CA_DIR` 可以改。装完要**重启 WeChat**，证书库是启动时读的。
+CA 默认在 `~/.config/wx-dlh/ca/`（**不在仓库里**，因为带私钥）。`WX_DLH_CA_DIR` 可以改。装完要**重启 WeChat**，证书库是启动时读的。
 
 如果之后发现 WeChat 仍然不认这张证书，按这个顺序试：
 
@@ -52,23 +52,23 @@ CA 默认在 `~/.config/wxclip/ca/`（**不在仓库里**，因为带私钥）�
 scripts/trust-ca.sh --system           # 宿主机系统信任库（sudo；Flatpak 看不到，但 /opt/wechat 那个包要）
 # 让沙箱里的 OpenSSL 类调用也认（Chromium 的 NSS 不吃这招，但值得一并排除）
 flatpak override --user com.tencent.WeChat \
-  --filesystem="$HOME/.config/wxclip:ro" \
-  --env=SSL_CERT_FILE="$HOME/.config/wxclip/ca/mitmproxy-ca-cert.pem"
+  --filesystem="$HOME/.config/wx-dlh:ro" \
+  --env=SSL_CERT_FILE="$HOME/.config/wx-dlh/ca/mitmproxy-ca-cert.pem"
 flatpak override --user --reset com.tencent.WeChat   # 撤销
 ```
 
 ## 2. 启动代理
 
 ```bash
-.venv/bin/python -m wxclip proxy                    # 默认 127.0.0.1:8899
-.venv/bin/python -m wxclip proxy --host 0.0.0.0     # 只有 WeChat 不在本机时才需要
-.venv/bin/python -m wxclip proxy --dry-run          # 只打印计划，不监听
+.venv/bin/python -m wx_dlh proxy                    # 默认 127.0.0.1:8899
+.venv/bin/python -m wx_dlh proxy --host 0.0.0.0     # 只有 WeChat 不在本机时才需要
+.venv/bin/python -m wx_dlh proxy --dry-run          # 只打印计划，不监听
 ```
 
 代理会做三件事：
 
 1. 把**每一条 flow** 摘要写进 `captures/traffic-*.jsonl`（方法、host、path、状态、content-type、是否注入），并把完整 flow 存成 `captures/flows-*.mitm`（用 `mitmproxy -r <file>` 回看）。这就是 M0 的证据。
-2. 给 `channels.weixin.qq.com` 的 HTML 响应在 `</body>` 前插 `<script src="/__wxclip/inject.js">`，同时**删掉该响应的 CSP 头**；`/__wxclip/*` 的请求由代理自己回，不转发上游。脚本走**页面同源**，比参考实现的 `res.wx.qq.com` + `aaaa.com` 少一层 CSP 和跨域风险。原始页面另存为 `captures/pages/*.html`。
+2. 给 `channels.weixin.qq.com` 的 HTML 响应在 `</body>` 前插 `<script src="/__wx-dlh/inject.js">`，同时**删掉该响应的 CSP 头**；`/__wx-dlh/*` 的请求由代理自己回，不转发上游。脚本走**页面同源**，比参考实现的 `res.wx.qq.com` + `aaaa.com` 少一层 CSP 和跨域风险。原始页面另存为 `captures/pages/*.html`。
 3. 收注入脚本回传的 `probe` / `hook` / `invoke` / `capture` 事件，写进 `captures/captures-*.jsonl`，`capture` 事件在终端直接打出 `decode_key` 和下载地址。
 
 `captures/` 与 CA 都在 `.gitignore` 里 —— 里面是本人的会话内容，不要提交。
@@ -98,7 +98,7 @@ scripts/run-wechat-proxied.sh --kill     # 或者让脚本替你 flatpak kill �
 出路是给 webview 加 `--ignore-certificate-errors-spki-list=<base64(sha256(SPKI))>` —— 只放行我们这一个公钥，而不是整体关掉证书校验。它的命令行由 `libwmpf_host_export.so` 拼，不读环境变量也不读配置文件，所以我们在 exec 的那一刻把参数插进去：
 
 ```bash
-scripts/build-appex-preload.sh            # 编译 LD_PRELOAD shim，并 --persist=.wxclip
+scripts/build-appex-preload.sh            # 编译 LD_PRELOAD shim，并 --persist=.wx-dlh
 scripts/run-wechat-proxied.sh --persist   # 代理环境变量 + LD_PRELOAD + 我们 CA 的 SPKI
 # 然后把 WeChat 完全退出（托盘 → 退出）再启动
 ```

@@ -89,7 +89,7 @@ const index = Number(arg("index", "0"));
 const media = entries[index];
 if (!media) throw new Error(`no media entry at index ${index}`);
 
-const decryptJs = arg("decrypt-js") ?? process.env.WXCLIP_DECRYPT_JS;
+const decryptJs = arg("decrypt-js") ?? process.env.WX_DLH_DECRYPT_JS;
 if (!decryptJs) throw new Error("pass --decrypt-js <path to decrypt.js>");
 
 const out = arg("out", `captures/m0/media-${index}.mp4`);

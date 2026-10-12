@@ -18,4 +18,4 @@ fi
 echo
 echo "Done. Next:"
 echo "  make lint test"
-echo "  .venv/bin/python -m wxclip --help"
+echo "  .venv/bin/python -m wx_dlh --help"
