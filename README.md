@@ -53,6 +53,24 @@
 
 ## 快速开始
 
+### Python 环境
+
+需要 Python 3.11+。推荐用 [uv](https://docs.astral.sh/uv/) 或 [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html) 管理，它们怎么安装以各自的官方文档为准，这里不重复。
+
+- **uv**：`make setup` 会直接用它建 `.venv`（没有 uv 时回落到 `python3 -m venv` + pip）。
+- **micromamba**：自己建一个 Python ≥ 3.11 的环境并激活，在仓库根目录 `pip install -e '.[dev,proxy]'`；之后跑 `make lint test PY=python`（Makefile 默认找 `.venv/bin/python`）。
+
+### 只想用，不改代码
+
+```bash
+pip install "wx-dlh[proxy]"                                           # 发布到 PyPI 之后
+pip install "wx-dlh[proxy] @ git+https://github.com/amyteq/at_wxclip"  # 现在（仓库是私有的，要有访问权限）
+```
+
+`[proxy]` 带上 mitmproxy，`capture` / `proxy` 要它；只做下载、解密、后处理可以不带。想装成独立的命令行工具就用 `pipx install "wx-dlh[proxy]"` 或 `uv tool install "wx-dlh[proxy]"`。注意 pip 装上的只有 `wx-dlh` 命令本身，`scripts/` 下的辅助脚本（信任 CA、Linux 上带代理启动 WeChat）不在包里，要从仓库取。发布流程见 `docs/pypi-publishing.md`。
+
+### 开发
+
 ```bash
 make setup          # 创建 .venv 并安装依赖（uv，回落到 pip；含代理用的 mitmproxy）
 make lint test      # 检查 + 测试

@@ -1,10 +1,29 @@
 [project]
 name = "wx-dlh"
-version = "0.0.1"
-description = "Capture, decode and download WeChat videos playable in the local WeChat client"
+dynamic = ["version"]
+description = "Capture, decrypt and download WeChat Channels videos playable in your own WeChat client"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
-# Candidates are still open; see docs/development-plan.md and pin them as each milestone lands.
+keywords = ["wechat", "weixin", "channels", "video", "downloader", "mitmproxy"]
+# Only what has been run: Linux end to end, and the Python versions the wheel was installed
+# and smoke-tested on. Widen these as macOS / Windows (#11) and newer Pythons get verified.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+]
+# `license` and `authors` are for the owner to decide before the first upload; until then
+# PyPI would show none. See docs/pypi-publishing.md.
+
+[project.urls]
+Homepage = "https://github.com/amyteq/at_wxclip"
+Issues = "https://github.com/amyteq/at_wxclip/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
@@ -23,6 +42,11 @@ wx-dlh = "wx_dlh.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# One version, in wx_dlh/__init__.py: `wx-dlh --version`, the dashboard and the package
+# metadata all read it, so a release bumps it in exactly one place.
+[tool.hatch.version]
+path = "wx_dlh/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["wx_dlh"]
 
@@ -33,6 +57,22 @@ packages = ["wx_dlh"]
 "web/inject.js" = "wx_dlh/_web/inject.js"
 "web/dashboard.html" = "wx_dlh/_web/dashboard.html"
 "web/dashboard.js" = "wx_dlh/_web/dashboard.js"
+
+# An allowlist, not hatch's default. By default an sdist takes every file git does not
+# ignore, and a working checkout collects untracked ones - agent config, scratch copies -
+# that must never be uploaded (a default build here picked up a stray ~/.claude-* tree).
+# This is what building the wheel and running the tests from the sdist need.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/wx_dlh",
+    "/web/inject.js",
+    "/web/dashboard.html",
+    "/web/dashboard.js",
+    "/tests",
+    "/scripts",
+    "/tools/check-inject.mjs",
+    "/README.md",
+]
 
 [tool.ruff]
 line-length = 100

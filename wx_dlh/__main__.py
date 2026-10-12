@@ -28,8 +28,8 @@ PLANNED: dict[str, str] = {}
 
 MISSING_MITMPROXY = (
     "wx-dlh proxy needs mitmproxy, which is an optional dependency.\n"
-    "  make setup                                   # installs .[dev,proxy]\n"
-    "  uv pip install --python .venv/bin/python -e '.[proxy]'"
+    "  pip install 'wx-dlh[proxy]'                  # installed from PyPI or a wheel\n"
+    "  make setup                                   # in a checkout: installs .[dev,proxy]"
 )
 
 
