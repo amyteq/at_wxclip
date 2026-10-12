@@ -92,6 +92,7 @@ docker compose run --rm cli --help
 | `WX_DLH_PROXY_PORT` | `8899` | 代理端口，宿主机和容器里用同一个号，面板上显示的地址因此就是 WeChat 该填的地址 |
 | `WX_DLH_SERVER_PORT` | `8080` | 面板端口，同上 |
 | `WX_DLH_UID` / `WX_DLH_GID` | 挂载目录的属主 | 容器写文件用的身份，见下 |
+| `WX_DLH_OUTBOUND_PROXY` | 空 | 容器出站要走的 HTTP 代理。默认空，也就是谁都不走，见「安全」里的下载直连 |
 | `WX_DLH_MEDIA_TOOLS` | `0` | `1`：构建时装上 ffmpeg 和 tesseract |
 
 容器日志里打印的是容器内路径，对照关系：
@@ -118,7 +119,8 @@ docker compose run --rm cli --help
 ## 安全
 
 - 端口默认只发布在 `127.0.0.1`。代理和面板都没有认证，别轻易改成 `0.0.0.0`。
-- CA 私钥（`mitmproxy-ca.pem`）留在宿主机的 CA 目录里，不进镜像、不进 Git。拿到它的人能对这台机器上信任它的程序做中间人。
+- CA 私钥（`mitmproxy-ca.pem`）留在宿主机的 CA 目录里，不进镜像、不进 Git。拿到它的人能对这台机器上信任它的程序做中间人。构建上下文是白名单，并且 `.env`、`*.pem`、`*.key`、`*.cer`、`*.p12` 这几条排在白名单之后（Docker 按最后一条匹配的规则算），所以就算有人把 CA 目录放到 `wx_dlh/` 底下，私钥也不会被送进构建。
+- **下载是直连 CDN 的，不经过代理。** 宿主机的 Docker 客户端如果在 `~/.docker/config.json` 里配了 `proxies`，它会往每个容器注入 `HTTP_PROXY` / `http_proxy` 这组变量，而 Python 的 urllib 默认就认这组变量；入口脚本在启动 wx-dlh 之前把它们清掉（`NO_PROXY` 不动，它只会让更多请求直连）。确实需要让容器出站走代理，就设 `WX_DLH_OUTBOUND_PROXY=http://主机:端口`，它会覆盖这组变量 —— 但别指向 wx-dlh 自己的代理：那个中间人代理是用来拿 URL 和 `decode_key` 的，不负责搬运媒体文件。
 - 镜像只在本地构建（`wx-dlh:local`），不推送到任何仓库。
 - 代理和原生版本一样会把 flow 存档写进 `captures/flows-*.mitm`；常驻运行时它会一直增长，不需要就在 `compose.yaml` 的 `proxy` 命令里加 `--no-save-flows`。`compose.yaml` 故意没有设 `restart:`：一个中间人代理在开机后悄悄自己起来，不该是默认行为。
 
@@ -132,6 +134,8 @@ docker compose run --rm cli --help
 - `capture` 服务：抓到一条就下载、解密并以 0 退出；`cli download --list` 能读到同一批记录。
 - `docker compose stop` 不到 1 秒，代理正常收尾（打印统计、写完日志）。
 - 入口脚本：挂载目录属于其他 uid 时以那个 uid 运行，并接管 Docker 新建的 root 目录。
+- 代理变量：Docker 客户端配了 `proxies` 时容器里确实会出现 `HTTP_PROXY` / `http_proxy`（大小写都有）。清掉之前 `wx-dlh download` 连的是那个代理地址，清掉之后连的是 URL 里的主机名；设上 `WX_DLH_OUTBOUND_PROXY` 又会按要求走指定的代理。
+- 构建上下文：在 `wx_dlh/` 下放 `ca/mitmproxy-ca.pem`、`.env.local`、`client.key` 再构建，三个文件都没进 build 阶段的 `/src`（白名单补上这几条排除之前，三个都进去了）。
 
 没有验证的：
 

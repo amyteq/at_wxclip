@@ -9,4 +9,13 @@
 !web/dashboard.html
 !web/dashboard.js
 !scripts/docker-entrypoint.sh
+# Docker takes the last matching pattern, so these come after the negations: `*` only
+# matches the top level, so `!wx_dlh/` would otherwise re-include a CA dir, a key or an
+# .env someone put below it (`--ca-dir wx_dlh/ca`, say).
 **/__pycache__
+**/.env*
+**/*.pem
+**/*.cer
+**/*.crt
+**/*.key
+**/*.p12

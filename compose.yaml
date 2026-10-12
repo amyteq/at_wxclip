@@ -14,6 +14,9 @@
 #   WX_DLH_PROXY_PORT     proxy port, on the host and in the container (default 8899)
 #   WX_DLH_SERVER_PORT    dashboard port, likewise (default 8080)
 #   WX_DLH_UID/WX_DLH_GID who files are written as (default: whoever owns the mounts)
+#   WX_DLH_OUTBOUND_PROXY HTTP proxy for the container's own outbound traffic. Empty by
+#                         default, and the entrypoint then clears the HTTP(S)_PROXY a
+#                         Docker client injects: downloads go straight to the CDN
 #   WX_DLH_MEDIA_TOOLS=1  build with ffmpeg and tesseract, for `process` / `shots`
 
 name: wx-dlh
@@ -30,6 +33,7 @@ x-wx-dlh: &wx-dlh
     WX_DLH_GID: ${WX_DLH_GID:-}
     WX_DLH_PROXY_PORT: ${WX_DLH_PROXY_PORT:-8899}
     WX_DLH_SERVER_PORT: ${WX_DLH_SERVER_PORT:-8080}
+    WX_DLH_OUTBOUND_PROXY: ${WX_DLH_OUTBOUND_PROXY:-}
   volumes:
     - ${WX_DLH_CA_HOST_DIR:-~/.config/wx-dlh/ca}:/data/ca
     - ./captures:/data/captures

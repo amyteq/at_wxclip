@@ -11,6 +11,18 @@ set -eu
 
 dirs="$WX_DLH_CA_DIR $WX_DLH_CAPTURE_DIR $WX_DLH_DOWNLOAD_DIR $WX_DLH_PROCESS_DIR"
 
+# A Docker client with `proxies` in ~/.docker/config.json injects HTTP_PROXY / http_proxy
+# and friends into every container it creates, and urllib honours them - but a download
+# goes straight to the CDN, never through a proxy. So they are cleared here, unless
+# WX_DLH_OUTBOUND_PROXY asks for one. NO_PROXY is left alone: it only narrows.
+for name in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+  if [ -n "${WX_DLH_OUTBOUND_PROXY:-}" ]; then
+    export "$name=$WX_DLH_OUTBOUND_PROXY"
+  else
+    unset "$name"
+  fi
+done
+
 if [ "$(id -u)" != 0 ]; then  # `user:` was set in compose: nothing to decide
   exec wx-dlh "$@"
 fi
