@@ -455,17 +455,21 @@ class Trust:
                         f"[system] {path}: {_which_ca(sha, self.sha256)}"
                         f" - left alone; take it out with: {undo} && {rebuild}"
                     )
+            # An anchor we could not read is not "done" - it may well be this very CA,
+            # and it stays behind either way. That it sits beside one we did remove makes
+            # no difference, so the exit code does not change either (as in the script).
+            readable = all(found.values())
             if not ours:
                 if not found:
                     self.say(f"[system] nothing to remove in {directory}")
-                return all(found.values())  # an anchor we could not read is not "done"
+                return readable
             if not (
                 self._change([*self._sudo, "rm", "-f", *(str(path) for path in ours)], "system")
                 and self._change([*self._sudo, tool], "system")
             ):
                 return False
             self.say(f"[system] removed {' and '.join(str(path) for path in ours)}")
-            return True
+            return readable
         if legacy.is_file() and not self._change([*self._sudo, "rm", "-f", str(legacy)], "system"):
             return False
         install = [*self._sudo, "install", "-m", "0644", str(self.cert), str(anchor)]
