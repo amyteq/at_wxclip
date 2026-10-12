@@ -1,15 +1,15 @@
 # 总结 prompt 的固定样本
 
-判的是**同一段文字喂给同一个 prompt，输出是否还合格**。prompt 本身不在这里 —— 它是 `wxclip/summarize.py` 里的 `SYSTEM_PROMPT`，跟着 wheel 一起装；这里只放输入样本和评判标准。改那段文字之前，先把下面每个样本跑一遍，把输出记进「历次运行」。
+判的是**同一段文字喂给同一个 prompt，输出是否还合格**。prompt 本身不在这里 —— 它是 `wx_dlh/summarize.py` 里的 `SYSTEM_PROMPT`，跟着 wheel 一起装；这里只放输入样本和评判标准。改那段文字之前，先把下面每个样本跑一遍，把输出记进「历次运行」。
 
 ## 怎么跑
 
 ```bash
 # 先看请求本身（不花钱、不需要凭据）
-wxclip summarize --text evals/summarize/m0-mac-duo/text.txt --dry-run
+wx-dlh summarize --text evals/summarize/m0-mac-duo/text.txt --dry-run
 
 # 真跑一次，输出写到 temp/（git 忽略），不要污染样本目录
-wxclip summarize --text evals/summarize/m0-mac-duo/text.txt --out temp/eval
+wx-dlh summarize --text evals/summarize/m0-mac-duo/text.txt --out temp/eval
 ```
 
 不带 `--out` 时输出落在样本目录旁边，跑 evals 时记得加上。要比模型/档位就换 `--model` / `--effort`，两者都会写进 `summary.md` 的表头。
@@ -23,7 +23,7 @@ wxclip summarize --text evals/summarize/m0-mac-duo/text.txt --out temp/eval
 | `m0-mac-duo/` | M0 实测片子的真实 OCR 结果（21 行，含误识别） | 能不能从脏文本里还原出正确的一段话 |
 | `no-text/` | 空转写 | 没有信息时会不会编 |
 
-两个样本都只有文字：截图不进 Git（见 `docs/directory-guide.md`），要带图跑就用 `wxclip process <视频>` 走完整条路。带图和不带图的差别本身也值得记一笔 —— OCR 把「折叠屏」读成「折玛屏/折私屏/折县」，只有图能纠正它。
+两个样本都只有文字：截图不进 Git（见 `docs/directory-guide.md`），要带图跑就用 `wx-dlh process <视频>` 走完整条路。带图和不带图的差别本身也值得记一笔 —— OCR 把「折叠屏」读成「折玛屏/折私屏/折县」，只有图能纠正它。
 
 ### m0-mac-duo
 

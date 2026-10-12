@@ -1,4 +1,4 @@
-/* wxclip hook script - the local proxy appends this to the WeChat Channels H5 page.
+/* wx-dlh hook script - the local proxy appends this to the WeChat Channels H5 page.
  *
  * It exists for one reason: decode_key never travels in a network request. It only
  * appears in the WeixinJSBridge JSAPI response, so the only way to see it is from inside
@@ -16,20 +16,20 @@
 (function () {
   "use strict";
 
-  var VERSION = "__WXCLIP_VERSION__";
-  var CAPTURE_PATH = "__WXCLIP_CAPTURE_PATH__";
-  var INCLUDE_SNIPPET = "__WXCLIP_INCLUDE_SNIPPET__";
+  var VERSION = "__WX_DLH_VERSION__";
+  var CAPTURE_PATH = "__WX_DLH_CAPTURE_PATH__";
+  var INCLUDE_SNIPPET = "__WX_DLH_INCLUDE_SNIPPET__";
   var SNIPPET_LIMIT = 8000;
 
-  if (window.__wxclip) {
+  if (window.__wx_dlh) {
     return;
   }
   var state = { version: VERSION, invokes: 0, captures: 0, hooked: false };
-  window.__wxclip = state;
+  window.__wx_dlh = state;
 
   function log() {
     try {
-      var args = ["[wxclip]"].concat(Array.prototype.slice.call(arguments));
+      var args = ["[wx-dlh]"].concat(Array.prototype.slice.call(arguments));
       console.log.apply(console, args);
     } catch (e) {
       /* a webview without a console is not a reason to stop */
@@ -43,7 +43,7 @@
       payload.kind = kind;
       payload.page_url = String(location.href);
       payload.user_agent = navigator.userAgent;
-      payload.wxclip_version = VERSION;
+      payload.wx_dlh_version = VERSION;
       body = JSON.stringify(payload);
     } catch (e) {
       log("could not serialise", kind, e);
@@ -207,7 +207,7 @@
   }
 
   function hook(bridge) {
-    if (!bridge || typeof bridge !== "object" || bridge.__wxclip_hooked) {
+    if (!bridge || typeof bridge !== "object" || bridge.__wx_dlh_hooked) {
       return bridge;
     }
     var invoke = bridge.invoke;
@@ -222,7 +222,7 @@
         return on.call(this, event, wrapCallback("on:" + event, callback));
       };
     }
-    bridge.__wxclip_hooked = true;
+    bridge.__wx_dlh_hooked = true;
     state.hooked = true;
     log("hooked WeixinJSBridge", { invoke: typeof invoke, on: typeof on });
     send("hook", { has_invoke: typeof invoke === "function", has_on: typeof on === "function" });

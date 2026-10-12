@@ -13,9 +13,9 @@ import urllib.error
 import pytest
 
 from tests.conftest import FakeRunner
-from wxclip.frames import Shot, ShotSet
-from wxclip.media import MediaInfo
-from wxclip.summarize import (
+from wx_dlh.frames import Shot, ShotSet
+from wx_dlh.media import MediaInfo
+from wx_dlh.summarize import (
     API_URL,
     API_VERSION,
     DEFAULT_MODEL,

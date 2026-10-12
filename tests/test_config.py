@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from wxclip.config import Settings, read_dotenv
+from wx_dlh.config import Settings, read_dotenv
 
 
 def test_defaults_match_the_documented_ones():
@@ -12,17 +12,17 @@ def test_defaults_match_the_documented_ones():
     assert (settings.proxy_host, settings.proxy_port) == ("127.0.0.1", 8899)
     assert settings.capture_dir == Path("captures")
     assert settings.process_dir == Path("processed")
-    assert settings.ca_dir.parts[-2:] == ("wxclip", "ca")
+    assert settings.ca_dir.parts[-2:] == ("wx-dlh", "ca")
 
 
 def test_environment_overrides_everything():
     settings = Settings.from_env(
         env={
-            "WXCLIP_PROXY_HOST": "0.0.0.0",
-            "WXCLIP_PROXY_PORT": "9999",
-            "WXCLIP_CAPTURE_DIR": "/tmp/caps",
-            "WXCLIP_PROCESS_DIR": "/tmp/proc",
-            "WXCLIP_CA_DIR": "/tmp/ca",
+            "WX_DLH_PROXY_HOST": "0.0.0.0",
+            "WX_DLH_PROXY_PORT": "9999",
+            "WX_DLH_CAPTURE_DIR": "/tmp/caps",
+            "WX_DLH_PROCESS_DIR": "/tmp/proc",
+            "WX_DLH_CA_DIR": "/tmp/ca",
         }
     )
     assert (settings.proxy_host, settings.proxy_port) == ("0.0.0.0", 9999)
@@ -33,19 +33,19 @@ def test_environment_overrides_everything():
 
 def test_dotenv_fills_gaps_but_the_environment_wins(tmp_path):
     dotenv = tmp_path / ".env"
-    dotenv.write_text("WXCLIP_PROXY_PORT=1234\nWXCLIP_SERVER_PORT=4321\n", encoding="utf-8")
-    settings = Settings.from_env(env={"WXCLIP_PROXY_PORT": "5555"}, dotenv=dotenv)
+    dotenv.write_text("WX_DLH_PROXY_PORT=1234\nWX_DLH_SERVER_PORT=4321\n", encoding="utf-8")
+    settings = Settings.from_env(env={"WX_DLH_PROXY_PORT": "5555"}, dotenv=dotenv)
     assert settings.proxy_port == 5555
     assert settings.server_port == 4321
 
 
 def test_a_port_typo_fails_loudly():
-    with pytest.raises(ValueError, match="WXCLIP_PROXY_PORT"):
-        Settings.from_env(env={"WXCLIP_PROXY_PORT": "88ninetynine"})
+    with pytest.raises(ValueError, match="WX_DLH_PROXY_PORT"):
+        Settings.from_env(env={"WX_DLH_PROXY_PORT": "88ninetynine"})
 
 
 def test_surrounding_whitespace_in_a_port_is_tolerated():
-    assert Settings.from_env(env={"WXCLIP_PROXY_PORT": " 8899 "}).proxy_port == 8899
+    assert Settings.from_env(env={"WX_DLH_PROXY_PORT": " 8899 "}).proxy_port == 8899
 
 
 def test_read_dotenv_skips_comments_and_strips_quotes(tmp_path):

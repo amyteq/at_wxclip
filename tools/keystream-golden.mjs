@@ -1,7 +1,7 @@
 /* Regenerate the keystream golden table in evals/README.md from the reference
  * implementation, and check the Python port against it.
  *
- * `wxclip.keystream` is a from-scratch ISAAC64 in Python; the only thing that makes it
+ * `wx_dlh.keystream` is a from-scratch ISAAC64 in Python; the only thing that makes it
  * trustworthy is that it produces byte-for-byte what `electron/decrypt.js` produces. That
  * file is 5.2 MB of Emscripten output and is not vendored here, so point --decrypt-js at
  * a checkout of harrysun2006/WeChatVideoDownloader:
@@ -10,7 +10,7 @@
  *   node tools/keystream-golden.mjs --seed 4145908544 --decrypt-js <path>
  *
  * It prints a markdown row per seed and, when .venv is present, compares each one with
- * `wxclip.keystream.keystream()` - which is the check that matters.
+ * `wx_dlh.keystream.keystream()` - which is the check that matters.
  */
 import crypto from "node:crypto";
 import path from "node:path";
@@ -28,7 +28,7 @@ function arg(name, fallback = null) {
   return i === -1 ? fallback : (process.argv[i + 1] ?? true);
 }
 
-const decryptJs = arg("decrypt-js") ?? process.env.WXCLIP_DECRYPT_JS;
+const decryptJs = arg("decrypt-js") ?? process.env.WX_DLH_DECRYPT_JS;
 if (!decryptJs) throw new Error("pass --decrypt-js <path to the reference decrypt.js>");
 const seeds = arg("seed") ? [String(arg("seed"))] : DEFAULT_SEEDS;
 
@@ -57,14 +57,14 @@ function pythonDigest(seed) {
       python,
       [
         "-c",
-        "import hashlib,sys;from wxclip.keystream import keystream;" +
+        "import hashlib,sys;from wx_dlh.keystream import keystream;" +
           "print(hashlib.sha256(keystream(sys.argv[1])).hexdigest())",
         seed,
       ],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     ).trim();
   } catch {
-    return null; // no venv, or wxclip not importable - the table is still worth printing
+    return null; // no venv, or wx-dlh not importable - the table is still worth printing
   }
 }
 
@@ -79,8 +79,8 @@ for (const seed of seeds) {
   const ours = pythonDigest(seed);
   if (ours && ours !== digest) {
     mismatches++;
-    console.error(`  !! wxclip.keystream disagrees for ${seed}: ${ours}`);
+    console.error(`  !! wx_dlh.keystream disagrees for ${seed}: ${ours}`);
   }
 }
-console.error(mismatches ? `${mismatches} seed(s) differ` : "wxclip.keystream matches decrypt.js");
+console.error(mismatches ? `${mismatches} seed(s) differ` : "wx_dlh.keystream matches decrypt.js");
 process.exit(mismatches ? 1 : 0);

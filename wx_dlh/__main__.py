@@ -1,4 +1,4 @@
-"""Command line entry point: `python -m wxclip` or `wxclip`."""
+"""Command line entry point: `python -m wx_dlh` or `wx-dlh`."""
 
 from __future__ import annotations
 
@@ -11,23 +11,23 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from wxclip import __version__, ca, downloader, frames, inject, pipeline, postprocess
-from wxclip import decrypt as decrypt_module
-from wxclip import extract as extract_module
-from wxclip import proxy as proxy_module  # mitmproxy-free at import time
-from wxclip import server as server_module
-from wxclip import summarize as summarize_module
-from wxclip.config import Settings, read_dotenv
-from wxclip.downloader import DownloadError, human_size
-from wxclip.keystream import KeystreamError
-from wxclip.media import MediaError, probe
-from wxclip.summarize import SummarizeError
+from wx_dlh import __version__, ca, downloader, frames, inject, pipeline, postprocess
+from wx_dlh import decrypt as decrypt_module
+from wx_dlh import extract as extract_module
+from wx_dlh import proxy as proxy_module  # mitmproxy-free at import time
+from wx_dlh import server as server_module
+from wx_dlh import summarize as summarize_module
+from wx_dlh.config import Settings, read_dotenv
+from wx_dlh.downloader import DownloadError, human_size
+from wx_dlh.keystream import KeystreamError
+from wx_dlh.media import MediaError, probe
+from wx_dlh.summarize import SummarizeError
 
 # Subcommands land with their milestones; see docs/development-plan.md.
 PLANNED: dict[str, str] = {}
 
 MISSING_MITMPROXY = (
-    "wxclip proxy needs mitmproxy, which is an optional dependency.\n"
+    "wx-dlh proxy needs mitmproxy, which is an optional dependency.\n"
     "  make setup                                   # installs .[dev,proxy]\n"
     "  uv pip install --python .venv/bin/python -e '.[proxy]'"
 )
@@ -218,10 +218,10 @@ def _add_model_options(parser: argparse.ArgumentParser) -> None:
 def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
     defaults = defaults or Settings.from_env(dotenv=Path(".env"))
     parser = argparse.ArgumentParser(
-        prog="wxclip",
+        prog="wx-dlh",
         description="Capture, decode and download WeChat videos playable in your WeChat client.",
     )
-    parser.add_argument("--version", action="version", version=f"wxclip {__version__}")
+    parser.add_argument("--version", action="version", version=f"wx-dlh {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="command")
 
     proxy = sub.add_parser(
@@ -277,7 +277,7 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
     download.add_argument(
         "--no-decrypt",
         action="store_true",
-        help="write the file exactly as served, still encrypted - for `wxclip decrypt` later",
+        help="write the file exactly as served, still encrypted - for `wx-dlh decrypt` later",
     )
     _add_fetch_options(download, defaults)
 
@@ -340,7 +340,7 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
             "Runs a local web panel over the same capture logs the CLI reads: the whole "
             "captured feed in one list, the proxy's status, and a download button per "
             "clip. It never downloads anything it did not capture itself, and it does not "
-            "run the proxy - start that with `wxclip proxy` alongside it."
+            "run the proxy - start that with `wx-dlh proxy` alongside it."
         ),
     )
     serve.add_argument("--host", default=defaults.server_host, help="listen address")
@@ -512,9 +512,17 @@ def _fail(message: str) -> int:
     return 1
 
 
+def _ensure_ca(ca_dir: Path) -> Path:
+    """`ca.ensure_ca`, after carrying over a CA made before the rename to wx-dlh."""
+    moved_from = ca.adopt_legacy_ca(ca_dir)
+    if moved_from is not None:
+        print(f"moved the existing CA from {moved_from} to {ca_dir} (renamed)", file=sys.stderr)
+    return ca.ensure_ca(ca_dir)
+
+
 def cmd_ca(args: argparse.Namespace) -> int:
     try:
-        ca.ensure_ca(args.ca_dir)
+        _ensure_ca(args.ca_dir)
     except ImportError:
         print(MISSING_MITMPROXY, file=sys.stderr)
         return 3
@@ -550,7 +558,7 @@ def _proxy_options(args: argparse.Namespace, settings: Settings) -> dict:
 def cmd_proxy(args: argparse.Namespace) -> int:
     settings = _proxy_settings(args)
     try:
-        cert = ca.ensure_ca(settings.ca_dir)
+        cert = _ensure_ca(settings.ca_dir)
     except ImportError:
         print(MISSING_MITMPROXY, file=sys.stderr)
         return 3
@@ -576,7 +584,7 @@ def cmd_proxy(args: argparse.Namespace) -> int:
 def _log_entries(capture_dir: Path) -> tuple[Path, list]:
     log = pipeline.newest_capture_log(capture_dir)
     if log is None:
-        raise FileNotFoundError(f"no captures-*.jsonl under {capture_dir} - run `wxclip proxy`")
+        raise FileNotFoundError(f"no captures-*.jsonl under {capture_dir} - run `wx-dlh proxy`")
     return log, pipeline.media_from_log(pipeline.read_capture_log(log))
 
 
@@ -665,7 +673,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
     except ValueError as exc:
         return _fail(str(exc))
     try:
-        cert = ca.ensure_ca(settings.ca_dir)
+        cert = _ensure_ca(settings.ca_dir)
     except ImportError:
         print(MISSING_MITMPROXY, file=sys.stderr)
         return 3
@@ -815,7 +823,7 @@ def cmd_extract(args: argparse.Namespace) -> int:
     try:
         video, directory = _resolve(args.target, args.out)
         if video is None:
-            return _fail(f"{directory} has no shots.json - run `wxclip shots` on the video first")
+            return _fail(f"{directory} has no shots.json - run `wx-dlh shots` on the video first")
         shots = postprocess.ensure_shots(video, directory, redo=args.redo, **_shot_kwargs(args))
         extraction = postprocess.ensure_text(shots, directory, redo=args.redo, **_ocr_kwargs(args))
     except (MediaError, FileNotFoundError, OSError) as exc:
@@ -854,7 +862,7 @@ def cmd_summarize(args: argparse.Namespace) -> int:
                 args.target, args.out or Settings.from_env(dotenv=Path(".env")).process_dir
             )
             if video is None:
-                return _fail(f"{directory} has no shots.json - run `wxclip shots` first")
+                return _fail(f"{directory} has no shots.json - run `wx-dlh shots` first")
             info = probe(video)
             shots = postprocess.ensure_shots(
                 video, directory, info=info, redo=args.redo, **_shot_kwargs(args)
@@ -923,7 +931,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command in PLANNED:
         print(
-            f"wxclip {args.command}: not implemented yet - {PLANNED[args.command]}",
+            f"wx-dlh {args.command}: not implemented yet - {PLANNED[args.command]}",
             file=sys.stderr,
         )
         return 2

@@ -27,8 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from wxclip.decrypt import HEAD_SAMPLE, HeadDecryptor, looks_like_mp4
-from wxclip.keystream import HEAD_BYTES
+from wx_dlh.decrypt import HEAD_SAMPLE, HeadDecryptor, looks_like_mp4
+from wx_dlh.keystream import HEAD_BYTES
 
 #: The reference implementation asks as desktop Chrome. Keep it: the CDN is not obliged
 #: to serve a default urllib user agent, and this is the combination known to work.
@@ -66,7 +66,7 @@ def suggest_filename(
 
     The digest is not decoration. It makes the name unique (two clips can share a
     description) and stable (the same clip captured again gets the same name), which is
-    what lets a second `wxclip capture` say "already downloaded" instead of fetching 585 MB
+    what lets a second `wx-dlh capture` say "already downloaded" instead of fetching 585 MB
     again. Both `description` and `nickname` came back empty on Linux, so `video-<digest>`
     is the common case rather than the exception.
 

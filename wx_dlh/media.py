@@ -1,6 +1,6 @@
 """Talking to ffmpeg and ffprobe.
 
-The post-processing half of wxclip (screenshots, text extraction, summary) leans on
+The post-processing half of wx-dlh (screenshots, text extraction, summary) leans on
 external binaries rather than Python packages, so the runtime dependency list stays empty
 and the heavy lifting is done by tools that are already tuned for it. What this module
 owns is the unglamorous part: finding those binaries, telling the operator which package
@@ -178,6 +178,6 @@ def probe(path: Path, *, run: Runner = run_default, timeout: float | None = 60.0
     if not streams:
         raise MediaError(
             f"{path} has no decodable streams - if this came straight off the CDN it is "
-            f"still encrypted; run `wxclip decrypt` on it first"
+            f"still encrypted; run `wx-dlh decrypt` on it first"
         )
     return info

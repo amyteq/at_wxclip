@@ -15,7 +15,7 @@
 
 ### 已经不再是未知的部分
 
-- **`decrypt.js` 可以脱离 Electron 复用** —— 已实测：纯 Node v24 里 import 即用，wasm 以 base64 内嵌在文件里，无需 Electron、无需额外 .wasm 文件。（M1 之后连这一步也不需要了：算法已移植进 `wxclip/keystream.py`，见下面 M1 那节。）
+- **`decrypt.js` 可以脱离 Electron 复用** —— 已实测：纯 Node v24 里 import 即用，wasm 以 base64 内嵌在文件里，无需 Electron、无需额外 .wasm 文件。（M1 之后连这一步也不需要了：算法已移植进 `wx_dlh/keystream.py`，见下面 M1 那节。）
 - **它到底做什么** —— ISAAC64 keystream 生成器：`getDecryptionArray(seedString)` 返回 131072 字节，用来 XOR 掉下载文件的**前 128 KiB**。它不解析下载地址；地址直接来自 JSAPI 响应的 `url + url_token`。
 - **两个坑** —— seed 必须以字符串传（wasm 侧是 `std::string`，传 number 直接抛错）；`decode_key` 是 64 位整数，被当成 JS number 解析会静默丢精度、keystream 完全错位。
 
@@ -32,10 +32,10 @@
 
 ### M0 — spike：打通 Linux 侧可行性（最先做，1–2 天）
 
-工具侧已经就绪（`wxclip proxy` / `wxclip ca` / `web/inject.js`，操作步骤见 `docs/M0-runbook.md`），剩下的都是要真人在 WeChat 里操作才能验的：
+工具侧已经就绪（`wx-dlh proxy` / `wx-dlh ca` / `web/inject.js`，操作步骤见 `docs/M0-runbook.md`），剩下的都是要真人在 WeChat 里操作才能验的：
 
 - [x] 让 Linux 版 WeChat 走本机代理：**应用内代理设置可用**（issue #4 的截图）
-- [x] 代理与 CA 落地：mitmproxy + 自签 CA（`~/.config/wxclip/ca/`），注入与回传通道已在真实 TLS 上验证（`channels.weixin.qq.com` 能被 MITM 出明文；注入与 `/__wxclip/*` 端点用 curl 走通）
+- [x] 代理与 CA 落地：mitmproxy + 自签 CA（`~/.config/wx-dlh/ca/`），注入与回传通道已在真实 TLS 上验证（`channels.weixin.qq.com` 能被 MITM 出明文；注入与 `/__wx-dlh/*` 端点用 curl 走通）
 - [x] 让 WeChat 信任这张 CA：**只有主进程做得到**。装进 Flatpak 沙箱的 NSS 库后主进程接受本地证书、HTTPS 解出明文（2026-09-11 实测，无一次 TLS 失败）；**webview 靠装 CA 永远不行**，它的根证书编译在 `WeChatAppEx` 二进制里，做校验的进程从不打开 NSS 数据库（证据见 `docs/project-background.md`）
 - [x] **H5 路线是否存在**：成立。webview 打开的就是 `channels.weixin.qq.com/web/pages/feed?oid=…&nid=…`（标题「视频号」），URL 与参考实现一致
 - [x] **把 webview 也塞进代理**：`flatpak override --env=http_proxy=…` 可行，webview 确实来连代理（桌面图标/托盘启动走 systemd app scope，`flatpak run --env=…` 对它无效）
@@ -49,47 +49,47 @@
 
 ### M1 — CLI 端到端
 
-- [x] `wxclip proxy` —— 启动 MITM 代理，注入脚本，接收回传的 `decode_key` + URL（M0 就能用，M1 加了 `on_event` 钩子，`capture` 挂在上面）
-- [x] `wxclip download <url> --key <decode_key>` —— 直连下载（不走代理）+ XOR 解密前 128 KiB，支持断点续传。另加 `--from-capture` / `--list`，免得手抄 600 字符的 URL；`--no-decrypt` 只取密文，配合 `wxclip decrypt` 排查
-- [x] `wxclip decrypt <file> --key <decode_key>` —— 对已下载的密文文件单独解密，`--in-place` 只改头部，585 MB 的文件也不用复制一遍
-- [x] `wxclip capture` —— 一条命令完成「注入 → 抓 key → 下载 → 解密」，抓够 `--count` 个就自己把代理停掉
+- [x] `wx-dlh proxy` —— 启动 MITM 代理，注入脚本，接收回传的 `decode_key` + URL（M0 就能用，M1 加了 `on_event` 钩子，`capture` 挂在上面）
+- [x] `wx-dlh download <url> --key <decode_key>` —— 直连下载（不走代理）+ XOR 解密前 128 KiB，支持断点续传。另加 `--from-capture` / `--list`，免得手抄 600 字符的 URL；`--no-decrypt` 只取密文，配合 `wx-dlh decrypt` 排查
+- [x] `wx-dlh decrypt <file> --key <decode_key>` —— 对已下载的密文文件单独解密，`--in-place` 只改头部，585 MB 的文件也不用复制一遍
+- [x] `wx-dlh capture` —— 一条命令完成「注入 → 抓 key → 下载 → 解密」，抓够 `--count` 个就自己把代理停掉
 - [x] keystream 来源二选一 —— **选了移植进 Python**，理由见下面「keystream 的取舍」
 - [x] pytest 覆盖：JSAPI 响应解析（按 Linux 实测形态：8 条 media、带引号的 key）、keystream 与 `decrypt.js` 的 5 个黄金样本逐字节一致、XOR 边界（< / = / > 128 KiB 各配 5 种分块）、续传偏移、`decode_key` 全程字符串不丢精度
 
-**退出标准 —— 已达成**（2026-09-11）：`wxclip capture` 一条命令从播放到可播放文件，`make lint test` 通过（241 项）。
+**退出标准 —— 已达成**（2026-09-11）：`wx-dlh capture` 一条命令从播放到可播放文件，`make lint test` 通过（241 项）。
 
 #### keystream 的取舍：移植，不桥接
 
-`decrypt.js` 里那 5.2 MB 的 wasm 就是**标准 ISAAC64**：把 `decode_key` 放进结果数组第 0 槽，`randinit` 走带 seed 的那条路径，取值顺序是 `rand()` 的顺序（结果数组从末尾往前），每个 64 位字按**大端**写出，直到 131072 字节。`wxclip/keystream.py` 是这个算法的 Python 实现（约 10 ms 一条 keystream），和 `decrypt.js` 的输出逐字节一致。
+`decrypt.js` 里那 5.2 MB 的 wasm 就是**标准 ISAAC64**：把 `decode_key` 放进结果数组第 0 槽，`randinit` 走带 seed 的那条路径，取值顺序是 `rand()` 的顺序（结果数组从末尾往前），每个 64 位字按**大端**写出，直到 131072 字节。`wx_dlh/keystream.py` 是这个算法的 Python 实现（约 10 ms 一条 keystream），和 `decrypt.js` 的输出逐字节一致。
 
 选它而不是起 Node 子进程，是因为：桥接要求装 Node、还要把不在本仓库里的 5.2 MB 产物找出来指给它，而移植版把整个运行时依赖降到零。风险（移植错了而不自知）由 `evals/README.md` 的黄金样本表挡着：表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次跑都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。`tools/m0-download-decrypt.mjs` 留着，作为一条完全不经过 Python 的独立验证路径。
 
 #### 下载用标准库，不引 httpx / aria2c
 
-`urllib.request` 够用：流式读、`Range` 续传、自定义 UA 都有，而 `wxclip` 的运行时依赖因此保持为零（`mitmproxy` 只在 `proxy` / `capture` 用得上，仍是 optional）。真需要并行分片再说。落地细节：写 `.part`，写完才改名；`.part` 里存的是**已解密**的字节，所以续传时 `HeadDecryptor` 从该偏移接着套 keystream —— 这条是最容易写错的地方，`tests/test_downloader.py` 用 5 个偏移守着。
+`urllib.request` 够用：流式读、`Range` 续传、自定义 UA 都有，而 `wx-dlh` 的运行时依赖因此保持为零（`mitmproxy` 只在 `proxy` / `capture` 用得上，仍是 optional）。真需要并行分片再说。落地细节：写 `.part`，写完才改名；`.part` 里存的是**已解密**的字节，所以续传时 `HeadDecryptor` 从该偏移接着套 keystream —— 这条是最容易写错的地方，`tests/test_downloader.py` 用 5 个偏移守着。
 
 ### M2 — 轻量 web server + 面板
 
-- [x] 本地 HTTP server：捕获列表、代理状态、一键下载 —— `wxclip serve`（`wxclip/server.py`，标准库 `http.server`，运行时依赖仍然是零）
+- [x] 本地 HTTP server：捕获列表、代理状态、一键下载 —— `wx-dlh serve`（`wx_dlh/server.py`，标准库 `http.server`，运行时依赖仍然是零）
 - [x] `web/` 前端页面（保持朴素，够用即可）—— `web/dashboard.html` + `web/dashboard.js`，原生 DOM，不引框架、不引 CDN、不铺构建工具
-- [x] 与 CLI 复用同一套 `wxclip` 代码，不做第二份实现 —— 找记录用 `pipeline`，下载解密用 `downloader`，文件命名用同一个 `suggest_filename`，所以面板和 CLI 看到的是同一批文件
+- [x] 与 CLI 复用同一套 `wx-dlh` 代码，不做第二份实现 —— 找记录用 `pipeline`，下载解密用 `downloader`，文件命名用同一个 `suggest_filename`，所以面板和 CLI 看到的是同一批文件
 
 **退出标准 —— 已达成**（2026-09-11）：浏览器里能看到捕获列表并触发下载，实测通过。同日 `make lint test` 通过（282 项，原 241 项）。
 
 #### 面板的三条实现约定
 
 - **下载请求只能指名一条捕获记录，不能给 URL**。页面回传的是它刚看到的那条记录的裸 `url`，不在抓取记录里的一概拒绝。反过来做（接受客户端给的 URL）等于让浏览器里的任意页面驱使这个进程去抓任意地址、并把结果写进下载目录。
-- **`decode_key` 出去是 JSON 字符串，而且不再回来**。它是 64 位整数，页面那侧 `JSON.parse` 碰上裸数字会静默丢精度 —— 这正是注入脚本在入口处用正则抠原文的原因（见 `wxclip.capture`）。面板只把它当文本显示，不做任何换算。`tests/test_server.py` 直接比对响应原文里那对引号。
+- **`decode_key` 出去是 JSON 字符串，而且不再回来**。它是 64 位整数，页面那侧 `JSON.parse` 碰上裸数字会静默丢精度 —— 这正是注入脚本在入口处用正则抠原文的原因（见 `wx_dlh.capture`）。面板只把它当文本显示，不做任何换算。`tests/test_server.py` 直接比对响应原文里那对引号。
 - **一次只下一个**，理由和 `pipeline` 一样：两个 585 MB 并行下载对谁都没好处。
 
-面板不负责起代理 —— 它只探一下代理端口通不通，然后把该跑的命令显示出来。两件事两个进程，互不依赖：`wxclip proxy` 在另一个终端里跑，面板每次请求都重读 `captures/`，所以不用告诉它代理什么时候抓到了东西。
+面板不负责起代理 —— 它只探一下代理端口通不通，然后把该跑的命令显示出来。两件事两个进程，互不依赖：`wx-dlh proxy` 在另一个终端里跑，面板每次请求都重读 `captures/`，所以不用告诉它代理什么时候抓到了东西。
 
 ### M3 — 视频后处理
 
-- [x] 关键帧截屏（ffmpeg）—— `wxclip shots`，场景检测挑帧，太平的片子退回均匀取
-- [x] 文字提取 —— **选了 OCR 这条路**（`wxclip extract`），理由见下面「文字提取选 OCR」
-- [x] 内容总结 —— `wxclip summarize`，prompt 在 `wxclip/summarize.py` 的 `SYSTEM_PROMPT`，固定样本与评判标准在 `evals/summarize/`
-- [x] `wxclip process <视频>` 一条命令走完三步，产物落在 `processed/<文件名>/`
+- [x] 关键帧截屏（ffmpeg）—— `wx-dlh shots`，场景检测挑帧，太平的片子退回均匀取
+- [x] 文字提取 —— **选了 OCR 这条路**（`wx-dlh extract`），理由见下面「文字提取选 OCR」
+- [x] 内容总结 —— `wx-dlh summarize`，prompt 在 `wx_dlh/summarize.py` 的 `SYSTEM_PROMPT`，固定样本与评判标准在 `evals/summarize/`
+- [x] `wx-dlh process <视频>` 一条命令走完三步，产物落在 `processed/<文件名>/`
 - [x] pytest 覆盖：ffprobe 解析、场景输出解析与挑帧策略、OCR 行清洗与跨帧去重、请求体形状与每条错误路径、三步的复用与续跑（都用假 runner，CI 不需要 ffmpeg 或 tesseract）
 
 **退出标准 —— 部分达成**（2026-09-11）：对 M0 那条 7.48 秒的样本，`shots` 出 5 张截屏 + `shots.json`，OCR 读回可读的中文（21 行，跨帧重复已合并），`summarize --dry-run` 打出完整请求体。**真实模型调用没跑过** —— 本机没有 `ANTHROPIC_API_KEY` 也没有 `ANTHROPIC_AUTH_TOKEN`，调用路径只被假 transport 和 `--dry-run` 覆盖。拿到凭据后按 `evals/summarize/README.md` 跑一遍，把结论填进那张表，这条才算真收口。
@@ -98,7 +98,7 @@
 
 三条路都能出文字，先选 OCR 是因为**这批内容的文字本来就在画面上**：
 
-- **字幕流不存在。** 视频号下载下来的 mp4 没有字幕轨（实测样本 `ffprobe` 只有 h264 + aac），字幕是烧进画面的。真遇到带字幕轨的，`wxclip process` 会把它指出来 —— 那时候直接抽流比 OCR 准得多，不该让 OCR 去猜。
+- **字幕流不存在。** 视频号下载下来的 mp4 没有字幕轨（实测样本 `ffprobe` 只有 h264 + aac），字幕是烧进画面的。真遇到带字幕轨的，`wx-dlh process` 会把它指出来 —— 那时候直接抽流比 OCR 准得多，不该让 OCR 去猜。
 - **语音转写答非所问。** M0 的样本是一张文字卡片：内容全在画面上，没有旁白。转写这种片子只能得到背景音乐。
 - **OCR 顺手。** 截屏这一步已经产出图了，OCR 只是每张多调一次 `tesseract` —— 不下模型、不加 Python 依赖、不要 GPU。
 
@@ -108,9 +108,9 @@
 
 #### 总结用标准库发请求，不引 anthropic SDK
 
-SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 httpx2 → httpcore2 → h11>=0.16，而 `mitmproxy` 把 h11 钉在更低的版本，`uv` 直接解不出来。真要了它，就会变成「能跑 `wxclip summarize` 的环境跑不了 `wxclip capture`」—— 一个工具裂成两个环境。退回 `anthropic<1` 能共存，但那是上一个大版本，`effort` 那套接口对不上。
+SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 httpx2 → httpcore2 → h11>=0.16，而 `mitmproxy` 把 h11 钉在更低的版本，`uv` 直接解不出来。真要了它，就会变成「能跑 `wx-dlh summarize` 的环境跑不了 `wx-dlh capture`」—— 一个工具裂成两个环境。退回 `anthropic<1` 能共存，但那是上一个大版本，`effort` 那套接口对不上。
 
-所以请求用标准库 `urllib` 发（约三十行：拼 header、POST、读 JSON），和「keystream 移植不桥接」「下载用 urllib 不引 httpx」同一个取舍——**运行时依赖保持为零**。mitmproxy 哪天放开 h11 的钉子，这三十行换成 SDK 即可，理由记在 `wxclip/summarize.py` 的模块注释里。
+所以请求用标准库 `urllib` 发（约三十行：拼 header、POST、读 JSON），和「keystream 移植不桥接」「下载用 urllib 不引 httpx」同一个取舍——**运行时依赖保持为零**。mitmproxy 哪天放开 h11 的钉子，这三十行换成 SDK 即可，理由记在 `wx_dlh/summarize.py` 的模块注释里。
 
 `pyproject.toml` 里因此**没有** `summarize` extra，那里留了一条注释说明原因，免得下一个人以为是漏了。
 
@@ -118,9 +118,9 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 
 | 环节 | 候选 | 取舍要点 |
 |------|------|----------|
-| MITM 代理 | **已定：`mitmproxy`**（optional 依赖 `.[proxy]`） | 能改写响应体、自带 CA 管理与 flow 存档；`wxclip.proxy` 只是一个 addon，mitmproxy 延迟导入，测试与 CI 不依赖它 |
+| MITM 代理 | **已定：`mitmproxy`**（optional 依赖 `.[proxy]`） | 能改写响应体、自带 CA 管理与 flow 存档；`wx_dlh.proxy` 只是一个 addon，mitmproxy 延迟导入，测试与 CI 不依赖它 |
 | CA 信任 | 系统 CA 目录 / NSS / 客户端自带校验 | 本机 WeChat 是 Flatpak：宿主机 `update-ca-trust` 它看不到（runtime 自带证书包），webview 是 Chromium 内核、用 NSS 库。`scripts/trust-ca.sh` 三个位置都覆盖，哪个生效 M0 验 |
-| keystream | **已定：移植 ISAAC64 到 Python**（`wxclip/keystream.py`） | 与 `decrypt.js` 输出逐字节一致，Node 与 5.2 MB wasm 都不再需要；黄金样本表守着移植的正确性 |
+| keystream | **已定：移植 ISAAC64 到 Python**（`wx_dlh/keystream.py`） | 与 `decrypt.js` 输出逐字节一致，Node 与 5.2 MB wasm 都不再需要；黄金样本表守着移植的正确性 |
 | 下载 | **已定：标准库 `urllib.request`** | 流式 + `Range` 续传够用，运行时依赖保持为零；`.part` 里是已解密字节，续传按偏移接 keystream |
 | web server | **已定：标准库 `http.server`** | 面板很薄，不值得为它引入大框架；`ThreadingHTTPServer` 够用，运行时依赖因此保持为零 |
 | 截屏/提取 | **已定：`ffmpeg` 场景检测 + `tesseract` OCR** | 两个都是外部命令，不进 Python 依赖；OCR 只是给已有的截屏多调一次，不下模型、不要 GPU。语音转写留作下一条路 |
@@ -134,10 +134,10 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 
 这几条是写代理时定的，和参考实现有意不同，理由记在这里免得以后当成 bug 改回去：
 
-- **注入脚本走页面同源**：`<script src="/__wxclip/inject.js">`，代理拦下 `/__wxclip/*` 自己回，不转发上游。参考实现从 `res.wx.qq.com` 取脚本、往哨兵域名 `aaaa.com` 回传，是为了绕页面 CSP；同源既满足 `script-src 'self'`，回传也不触发 CORS 预检。注入时同时删掉响应的 CSP 头作为双保险。
+- **注入脚本走页面同源**：`<script src="/__wx-dlh/inject.js">`，代理拦下 `/__wx-dlh/*` 自己回，不转发上游。参考实现从 `res.wx.qq.com` 取脚本、往哨兵域名 `aaaa.com` 回传，是为了绕页面 CSP；同源既满足 `script-src 'self'`，回传也不触发 CORS 预检。注入时同时删掉响应的 CSP 头作为双保险。
 - **`decode_key` 用正则从响应原文里抠**：`/"decode_key"\s*:\s*("?)(\d{1,20})\1/`。只要经过 `JSON.parse`，裸数字形式的 key 就已经是 float 了（`13835058055282163712` → `13835058055282164000`），而且不报错。引号有没有一并记成 `decode_key_json_type`，正好是 M0 要回答的问题之一。`tools/check-inject.mjs` 专门守着这条。
 - **默认不 MITM `(long|short|minorshort|dns).(wechat.com|weixin.qq.com)`**：那是 mmtls，不是 TLS，让它原样穿过，别把登录搞坏（`--ignore-host` 可改）。本机客户端用的是 `*.wechat.com` 那半边 —— 第一轮只挡了 `*.weixin.qq.com`，结果 276 个 mmtls 请求被白拦，视频也没播出来。
-- **给 webview 加 Chromium switch 靠 LD_PRELOAD**：`scripts/appex-flags-preload.c` 钩 `execv`/`execve`/`execvp`/`posix_spawn`，只对程序名匹配 `WXCLIP_APPEX_TARGET`（默认 `WeChatAppEx`）的 exec 追加 `WXCLIP_APPEX_FLAGS` 里的参数，已在 argv 里的 switch 不重复追加（Chromium 会 re-exec 自己拉子进程）。.so 放在 `~/.var/app/<app-id>/.wxclip/` 并 `--persist=.wxclip`，沙箱里才看得见。
+- **给 webview 加 Chromium switch 靠 LD_PRELOAD**：`scripts/appex-flags-preload.c` 钩 `execv`/`execve`/`execvp`/`posix_spawn`，只对程序名匹配 `WX_DLH_APPEX_TARGET`（默认 `WeChatAppEx`）的 exec 追加 `WX_DLH_APPEX_FLAGS` 里的参数，已在 argv 里的 switch 不重复追加（Chromium 会 re-exec 自己拉子进程）。.so 放在 `~/.var/app/<app-id>/.wx-dlh/` 并 `--persist=.wx-dlh`，沙箱里才看得见。
 - **spike 期间日志开得很大**：每条 flow 的摘要、注入前的原始页面、以及注入脚本看到的**每一次** `invoke`（只记 api 名、`err_msg` 和顶层 key 名，不记值）。Linux 上那个 `err_msg` 字符串就是这么找出来的。
 
 这几条是 M1 写下载与 capture 时定的：
@@ -146,7 +146,7 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 - **`media[]` 的选择权交给操作者**：一次 capture 带整屏 feed（实测 8 条），只有人知道刚才播的是哪一个。默认跟参考实现一样取 `media[0]`，`--index` / `--all` 覆盖其余情况。
 - **去重按裸 `url`，不按 `download_url`**：`url_token` 每次 capture 都换一份，拿全地址去重等于不去重，同一个视频会随着滚动被反复下载。文件名里的摘要同理，用裸 `url` 算。
 - **下载不经过代理**，这条从参考实现继承：代理的职责是把 `decode_key` 弄出来，不该再驮着几百 MB 的视频。UA 用桌面版 Chrome 那串，和参考实现一致。
-- **`wxclip capture` 抓够就自己停**：`proxy.run()` 多了一个 `on_ready`，把一个线程安全的 stop 交给调用方；下载在单独的工作线程上跑，抓够 `--count` 个就从那里把代理关掉。
+- **`wx-dlh capture` 抓够就自己停**：`proxy.run()` 多了一个 `on_ready`，把一个线程安全的 stop 交给调用方；下载在单独的工作线程上跑，抓够 `--count` 个就从那里把代理关掉。
 
 ## 跟踪
 

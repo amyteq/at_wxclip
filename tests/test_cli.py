@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from wxclip import __version__
-from wxclip.__main__ import PLANNED, build_parser, main
-from wxclip.keystream import HEAD_BYTES, keystream
+from wx_dlh import __version__
+from wx_dlh.__main__ import PLANNED, build_parser, main
+from wx_dlh.keystream import HEAD_BYTES, keystream
 
 
 def test_version_is_set():
@@ -16,7 +16,7 @@ def test_version_is_set():
 
 def test_no_command_prints_help(capsys):
     assert main([]) == 0
-    assert "wxclip" in capsys.readouterr().out
+    assert "wx-dlh" in capsys.readouterr().out
 
 
 def test_nothing_is_a_placeholder_any_more():
@@ -46,6 +46,16 @@ def test_ca_creates_the_ca_and_explains_the_trust_stores(tmp_path, capsys):
     assert (tmp_path / "ca" / "mitmproxy-ca-cert.pem").is_file()
 
 
+def test_ca_keeps_using_the_ca_made_before_the_rename(tmp_path, capsys):
+    pytest.importorskip("mitmproxy")
+    from wx_dlh import ca
+
+    before = ca.ensure_ca(tmp_path / "wxclip" / "ca").read_bytes()
+    assert main(["ca", "--ca-dir", str(tmp_path / "wx-dlh" / "ca")]) == 0
+    assert "moved the existing CA" in capsys.readouterr().err
+    assert ca.cert_path(tmp_path / "wx-dlh" / "ca").read_bytes() == before
+
+
 def test_proxy_dry_run_reports_the_plan_without_listening(tmp_path, capsys):
     pytest.importorskip("mitmproxy")
     code = main(
@@ -66,7 +76,7 @@ def test_proxy_dry_run_reports_the_plan_without_listening(tmp_path, capsys):
     plan = json.loads(capsys.readouterr().out.split("\nCA certificate:")[0])
     assert plan["proxy"].endswith(":18899")
     assert plan["page_hosts"] == ["channels.weixin.qq.com"]
-    assert plan["endpoints"]["capture"] == "/__wxclip/capture"
+    assert plan["endpoints"]["capture"] == "/__wx-dlh/capture"
     assert plan["script_bytes"] > 1000
     assert plan["mitmproxy_options"]["connection_strategy"] == "lazy"
 
@@ -203,7 +213,7 @@ def test_capture_dry_run_reports_the_plan_without_listening(tmp_path, capsys):
     assert code == 0
     plan = json.loads(capsys.readouterr().out.split("\nCA certificate:")[0])
     assert plan["proxy"].endswith(":18898")
-    assert plan["endpoints"]["capture"] == "/__wxclip/capture"
+    assert plan["endpoints"]["capture"] == "/__wx-dlh/capture"
 
 
 def test_capture_rejects_a_max_size_that_is_not_a_size(tmp_path, capsys):
@@ -243,7 +253,7 @@ def test_m3_commands_are_wired_up(command):
 def test_extract_check_reports_the_ocr_setup(monkeypatch, capsys):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/tesseract")
     monkeypatch.setattr(
-        "wxclip.extract.run_tool", lambda *a, **kw: "List of languages (2):\nchi_sim\neng\n"
+        "wx_dlh.extract.run_tool", lambda *a, **kw: "List of languages (2):\nchi_sim\neng\n"
     )
     assert main(["extract", "--check"]) == 0
     assert "is ready" in capsys.readouterr().out
@@ -274,7 +284,7 @@ def test_summarize_can_take_a_text_file_on_its_own(tmp_path, monkeypatch, capsys
     transcript = tmp_path / "text.txt"
     transcript.write_text("价值 15999 元视觉效果\n", encoding="utf-8")
     monkeypatch.setattr(
-        "wxclip.summarize.post_messages",
+        "wx_dlh.summarize.post_messages",
         lambda body, **kw: {
             "model": "claude-opus-5",
             "content": [{"type": "text", "text": "## 一句话概要\n\n讲了一个开源项目。"}],
@@ -293,7 +303,7 @@ def test_summarize_dry_run_prints_the_request_and_calls_nothing(tmp_path, monkey
     def forbidden(*a, **kw):  # pragma: no cover - must not be reached
         raise AssertionError("--dry-run must not call the API")
 
-    monkeypatch.setattr("wxclip.summarize.post_messages", forbidden)
+    monkeypatch.setattr("wx_dlh.summarize.post_messages", forbidden)
     assert main(["summarize", "--text", str(transcript), "--dry-run"]) == 0
 
     body = json.loads(capsys.readouterr().out)
@@ -315,7 +325,7 @@ def test_summarize_without_credentials_says_what_to_set(tmp_path, monkeypatch, c
 
 def test_the_dry_run_redacts_the_image_blobs():
     """Four base64 jpegs would bury the prompt that --dry-run exists to show."""
-    from wxclip.__main__ import _redact
+    from wx_dlh.__main__ import _redact
 
     body = {
         "messages": [
@@ -334,7 +344,7 @@ def test_the_dry_run_redacts_the_image_blobs():
 
 
 def test_shot_width_zero_means_native_size():
-    from wxclip.__main__ import _shot_kwargs
+    from wx_dlh.__main__ import _shot_kwargs
 
     args = build_parser().parse_args(["shots", "v.mp4", "--shot-width", "0"])
     assert _shot_kwargs(args)["width"] is None
@@ -346,7 +356,7 @@ def test_summarize_writes_where_out_says(tmp_path, monkeypatch):
     transcript = tmp_path / "text.txt"
     transcript.write_text("价值 15999 元视觉效果\n", encoding="utf-8")
     monkeypatch.setattr(
-        "wxclip.summarize.post_messages",
+        "wx_dlh.summarize.post_messages",
         lambda body, **kw: {
             "model": "claude-opus-5",
             "content": [{"type": "text", "text": "## 一句话概要\n\n讲了一个开源项目。"}],

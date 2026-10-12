@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const CAPTURE_PATH = "/__wxclip/capture";
+const CAPTURE_PATH = "/__wx-dlh/capture";
 const ORIGIN = "https://channels.weixin.qq.com";
 
 const posts = [];
@@ -35,10 +35,10 @@ globalThis.fetch = (url, init) => {
 globalThis.Blob = class Blob {};
 
 const source = readFileSync(join(root, "web", "inject.js"), "utf8")
-  .replaceAll("__WXCLIP_CAPTURE_PATH__", CAPTURE_PATH)
-  .replaceAll("__WXCLIP_VERSION__", "test")
-  .replaceAll('"__WXCLIP_INCLUDE_SNIPPET__"', "true");
-assert.ok(!source.includes("__WXCLIP_"), "template placeholders left in the script");
+  .replaceAll("__WX_DLH_CAPTURE_PATH__", CAPTURE_PATH)
+  .replaceAll("__WX_DLH_VERSION__", "test")
+  .replaceAll('"__WX_DLH_INCLUDE_SNIPPET__"', "true");
+assert.ok(!source.includes("__WX_DLH_"), "template placeholders left in the script");
 vm.runInThisContext(source, { filename: "web/inject.js" });
 
 // 1. the script announces itself, and says whether a bridge was there yet
@@ -72,7 +72,7 @@ window.WeixinJSBridge = {
     callback({ err_msg: "finderH5ExtTransfer:ok", jsapi_resp: { resp_json: respJson } });
   },
 };
-assert.equal(window.__wxclip.hooked, true, "bridge assignment was not hooked");
+assert.equal(window.__wx_dlh.hooked, true, "bridge assignment was not hooked");
 assert.equal(posts.at(-1).body.kind, "hook");
 
 window.WeixinJSBridge.invoke("getVideoInfo", {}, () => {
@@ -127,4 +127,4 @@ window.WeixinJSBridge = window.WeixinJSBridge;
 assert.equal(posts.length, before, "re-hooked an already hooked bridge");
 console.log("ok  hooking is idempotent");
 
-console.log(`\nall checks passed (${posts.length} posts, ${window.__wxclip.invokes} invokes seen)`);
+console.log(`\nall checks passed (${posts.length} posts, ${window.__wx_dlh.invokes} invokes seen)`);

@@ -2,8 +2,8 @@
 
 `pipeline.py` does this job for the capture half (event -> chosen media -> file); this is
 its counterpart for the post-processing half (file -> stills -> text -> summary). Keeping
-it out of `__main__.py` means `wxclip shots`, `wxclip extract`, `wxclip summarize` and
-`wxclip process` are four thin wrappers over one set of functions rather than four
+it out of `__main__.py` means `wx-dlh shots`, `wx-dlh extract`, `wx-dlh summarize` and
+`wx-dlh process` are four thin wrappers over one set of functions rather than four
 slightly different implementations of the same sequence.
 
 Everything a clip produces lands in one directory named after the clip:
@@ -27,13 +27,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from wxclip import extract as extract_module
-from wxclip import frames as frames_module
-from wxclip import summarize as summarize_module
-from wxclip.extract import Extraction
-from wxclip.frames import ShotSet
-from wxclip.media import MediaInfo, Runner, probe, run_default
-from wxclip.summarize import Summary
+from wx_dlh import extract as extract_module
+from wx_dlh import frames as frames_module
+from wx_dlh import summarize as summarize_module
+from wx_dlh.extract import Extraction
+from wx_dlh.frames import ShotSet
+from wx_dlh.media import MediaInfo, Runner, probe, run_default
+from wx_dlh.summarize import Summary
 
 
 def echo_line(line: str) -> None:

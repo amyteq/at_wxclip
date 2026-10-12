@@ -10,7 +10,7 @@ import json
 import pytest
 
 from tests.conftest import FakeRunner
-from wxclip.extract import (
+from wx_dlh.extract import (
     SOURCE_OCR,
     Extraction,
     ShotText,
@@ -23,8 +23,8 @@ from wxclip.extract import (
     ocr_image,
     write_text,
 )
-from wxclip.frames import Shot, ShotSet
-from wxclip.media import MediaError
+from wx_dlh.frames import Shot, ShotSet
+from wx_dlh.media import MediaError
 
 #: What tesseract really read off three consecutive stills of the M0 sample. The card
 #: holds still, so the headline comes back every time - which is the whole problem.
@@ -251,7 +251,7 @@ def test_an_empty_transcript_writes_an_empty_file_not_a_stray_newline(tmp_path):
 def test_check_reports_which_languages_are_missing(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/tesseract")
     listing = 'List of available languages in "/usr/share/tessdata" (2):\nafr\nosd\n'
-    monkeypatch.setattr("wxclip.extract.run_tool", lambda *a, **kw: listing)
+    monkeypatch.setattr("wx_dlh.extract.run_tool", lambda *a, **kw: listing)
     report = check_tesseract("chi_sim+eng")
     assert "installed: afr, osd" in report
     assert "missing:   chi_sim, eng" in report
@@ -260,7 +260,7 @@ def test_check_reports_which_languages_are_missing(monkeypatch):
 def test_check_says_so_when_everything_is_ready(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/tesseract")
     listing = "List of available languages (3):\nchi_sim\neng\nosd\n"
-    monkeypatch.setattr("wxclip.extract.run_tool", lambda *a, **kw: listing)
+    monkeypatch.setattr("wx_dlh.extract.run_tool", lambda *a, **kw: listing)
     assert "chi_sim+eng is ready" in check_tesseract("chi_sim+eng")
 
 

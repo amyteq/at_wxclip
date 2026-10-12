@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from wxclip.capture import (
+from wx_dlh.capture import (
     KIND_CAPTURE,
     CaptureError,
     CaptureLog,

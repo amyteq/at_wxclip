@@ -4,7 +4,7 @@
  * Why this exists: the Channels page renders in RadiumWMPF/WeChatAppEx, a Chromium 122
  * fork that verifies server certificates against a root store compiled into its own
  * binary. It never opens an NSS database in the process that does the verifying, so
- * installing the wxclip CA into ~/.pki/nssdb, the system anchors or p11-kit has no
+ * installing the wx-dlh CA into ~/.pki/nssdb, the system anchors or p11-kit has no
  * effect and the page fails with "your connection is not private" (observed 2026-09-11,
  * see docs/project-background.md).
  *
@@ -15,11 +15,11 @@
  * exec that launches it and append the switches ourselves.
  *
  * Preloaded into every process in the sandbox, it only acts on execs whose program name
- * matches WXCLIP_APPEX_TARGET; everything else passes straight through.
+ * matches WX_DLH_APPEX_TARGET; everything else passes straight through.
  *
- *   WXCLIP_APPEX_FLAGS   space-separated switches to append (no-op when unset)
- *   WXCLIP_APPEX_TARGET  program name to match, default WeChatAppEx
- *   WXCLIP_APPEX_DEBUG   set to 1 to log every rewrite to stderr
+ *   WX_DLH_APPEX_FLAGS   space-separated switches to append (no-op when unset)
+ *   WX_DLH_APPEX_TARGET  program name to match, default WeChatAppEx
+ *   WX_DLH_APPEX_DEBUG   set to 1 to log every rewrite to stderr
  *
  * Build with scripts/build-appex-preload.sh.
  */
@@ -39,7 +39,7 @@ static const char *program_name(const char *path) {
 }
 
 static int is_target(const char *path) {
-    const char *want = getenv("WXCLIP_APPEX_TARGET");
+    const char *want = getenv("WX_DLH_APPEX_TARGET");
     if (!path) return 0;
     if (!want || !*want) want = "WeChatAppEx";
     return strcmp(program_name(path), want) == 0;
@@ -62,7 +62,7 @@ static int already_present(char *const argv[], const char *flag) {
  * The caller is about to exec, so the allocation is deliberately never freed.
  */
 static char **argv_with_flags(const char *path, char *const argv[]) {
-    const char *flags = getenv("WXCLIP_APPEX_FLAGS");
+    const char *flags = getenv("WX_DLH_APPEX_FLAGS");
     if (!flags || !*flags || !is_target(path) || !argv || !argv[0]) return NULL;
 
     char *copy = strdup(flags);
@@ -90,8 +90,8 @@ static char **argv_with_flags(const char *path, char *const argv[]) {
     for (int i = 0; i < argc; i++) out[i] = argv[i];
     for (int i = 0; i < extra_count; i++) out[argc + i] = extra[i];
 
-    if (getenv("WXCLIP_APPEX_DEBUG")) {
-        fprintf(stderr, "[wxclip-preload] %s += ", program_name(path));
+    if (getenv("WX_DLH_APPEX_DEBUG")) {
+        fprintf(stderr, "[wx-dlh-preload] %s += ", program_name(path));
         for (int i = 0; i < extra_count; i++) fprintf(stderr, "%s ", extra[i]);
         fprintf(stderr, "\n");
         fflush(stderr);

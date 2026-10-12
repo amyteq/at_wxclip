@@ -1,6 +1,6 @@
 """From a capture event to a playable file: pick the media, download it, decrypt it.
 
-`wxclip capture` is `wxclip proxy` with this bolted on. The proxy hands every event the
+`wx-dlh capture` is `wx-dlh proxy` with this bolted on. The proxy hands every event the
 hook script posts to `CaptureRunner.on_event`, which runs in mitmproxy's event loop, so
 all it does is choose and enqueue; the downloading happens on one worker thread, one file
 at a time, because two 585 MB downloads racing each other help nobody.
@@ -20,9 +20,9 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from wxclip import downloader
-from wxclip.capture import Event, Media
-from wxclip.downloader import DownloadResult, Progress, human_size
+from wx_dlh import downloader
+from wx_dlh.capture import Event, Media
+from wx_dlh.downloader import DownloadResult, Progress, human_size
 
 
 def echo_line(line: str) -> None:
@@ -66,7 +66,7 @@ class CaptureRunner:
         self.finished = threading.Event()
         self._seen: set[str] = set()
         self._lock = threading.Lock()
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wxclip-download")
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wx-dlh-download")
 
     # -- selection -----------------------------------------------------------------------
 
@@ -209,7 +209,7 @@ def read_capture_log(path: Path) -> list[dict]:
 def media_from_log(records: Sequence[dict], *, only_valid: bool = True) -> list[Media]:
     """Every media entry in a `captures/captures-*.jsonl` feed, in the order recorded.
 
-    This is how `wxclip download --from-capture` finds a URL again without making the
+    This is how `wx-dlh download --from-capture` finds a URL again without making the
     operator copy a 600-character link out of a log by hand.
     """
     out: list[Media] = []

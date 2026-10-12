@@ -16,13 +16,13 @@ Three decisions worth keeping:
   directory.
 * **`decode_key` goes out as a JSON string, and never comes back.** It is a 64-bit
   integer: `JSON.parse` on a bare number silently rounds it, which is the whole reason the
-  hook script lifts it out of the raw response text on the way in (see `wxclip.capture`).
+  hook script lifts it out of the raw response text on the way in (see `wx_dlh.capture`).
   The page only ever displays it.
 * **One download at a time**, for the reason `pipeline` gives: two 585 MB transfers racing
   each other help nobody.
 
 Stdlib only, like the rest of the runtime - `http.server` is enough for a panel this thin
-and keeps `wxclip` importable with no third-party packages at all.
+and keeps `wx-dlh` importable with no third-party packages at all.
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from wxclip import __version__, downloader, inject, pipeline
-from wxclip.capture import Media
-from wxclip.config import Settings
-from wxclip.downloader import Progress, human_size
+from wx_dlh import __version__, downloader, inject, pipeline
+from wx_dlh.capture import Media
+from wx_dlh.config import Settings
+from wx_dlh.downloader import Progress, human_size
 
 #: Files from `web/` the panel is allowed to ask for, by request path. Everything else is
 #: a 404: this serves one page and its script, it is not a file server for `web/`.
@@ -164,7 +164,7 @@ class Dashboard:
     """What the panel shows and what it can set going.
 
     Holds no captured data of its own: the capture logs on disk are the record, and they
-    are re-read for each request. A panel left open therefore picks up a `wxclip proxy`
+    are re-read for each request. A panel left open therefore picks up a `wx-dlh proxy`
     running in another terminal without being told about it.
     """
 
@@ -182,7 +182,7 @@ class Dashboard:
         self._job_for_url: dict[str, int] = {}
         self._next_id = 1
         self._lock = threading.Lock()
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wxclip-serve")
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wx-dlh-serve")
 
     # -- what was captured ---------------------------------------------------------------
 
@@ -195,7 +195,7 @@ class Dashboard:
         event first within a log.
 
         Inside one event the order is left alone, because that is the feed order the
-        operator saw in WeChat and the numbering `wxclip download --index` uses. Reversing
+        operator saw in WeChat and the numbering `wx-dlh download --index` uses. Reversing
         there would leave row 0 of the panel meaning `--index 7` on the command line.
         """
         out: list[Media] = []
@@ -281,7 +281,7 @@ class Dashboard:
             "host": host,
             "port": port,
             "listening": port_open(host, port),
-            "command": f"wxclip proxy --host {host} --port {port}",
+            "command": f"wx-dlh proxy --host {host} --port {port}",
         }
 
     # -- state and jobs ------------------------------------------------------------------
@@ -387,7 +387,7 @@ class Dashboard:
 class DashboardHandler(BaseHTTPRequestHandler):
     """Routes. Small enough to read in one go, which is the point of a panel this thin."""
 
-    server_version = f"wxclip/{__version__}"
+    server_version = f"wx-dlh/{__version__}"
     protocol_version = "HTTP/1.1"  # so a `<video>` can keep a connection and seek
 
     @property
@@ -561,7 +561,7 @@ def serve(
     """Run the panel until interrupted. Returns a process exit code."""
     server = make_server(settings, download=download, echo=echo)
     host, port = server.server_address[0], server.server_address[1]
-    echo(f"wxclip dashboard on http://{host}:{port}\npress ctrl-c to stop")
+    echo(f"wx-dlh dashboard on http://{host}:{port}\npress ctrl-c to stop")
     proxy = server.dashboard.proxy_status()
     if not proxy["listening"]:
         echo(f"-- nothing on {proxy['host']}:{proxy['port']} yet; run: {proxy['command']}")

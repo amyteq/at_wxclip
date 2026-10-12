@@ -2,7 +2,7 @@
 
 import pytest
 
-from wxclip import inject
+from wx_dlh import inject
 
 
 def test_injects_before_the_last_body_tag():
@@ -16,7 +16,7 @@ def test_injects_before_html_when_there_is_no_body():
     result = inject.inject_html("<html><head></head></html>")
     expected = "<html><head></head>" + inject.script_tag() + "</html>"
     assert result == expected
-    assert inject.script_tag() == '<script data-wxclip="1" src="/__wxclip/inject.js"></script>'
+    assert inject.script_tag() == '<script data-wx-dlh="1" src="/__wx-dlh/inject.js"></script>'
 
 
 def test_appends_when_there_is_no_closing_tag_at_all():
@@ -67,7 +67,7 @@ def test_should_inject_needs_html_and_a_200():
 
 def test_hook_script_is_fully_templated():
     script = inject.hook_script(version="9.9.9")
-    assert "__WXCLIP_" not in script
+    assert "__WX_DLH_" not in script
     assert inject.CAPTURE_PATH in script
     assert "9.9.9" in script
     # the whole point: the key is read out of the raw text, not out of a parsed number

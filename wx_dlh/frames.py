@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from wxclip.media import FFMPEG, MediaError, MediaInfo, Runner, probe, run_default, run_tool
+from wx_dlh.media import FFMPEG, MediaError, MediaInfo, Runner, probe, run_default, run_tool
 
 #: Scene score above which a frame counts as a new shot. ffmpeg's score is 0..1; 0.2
 #: catches a cut and a card change without firing on camera shake. The M0 sample

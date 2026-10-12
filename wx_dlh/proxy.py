@@ -5,11 +5,11 @@ Three things happen here, and the middle one is why a passive sniffer is not eno
 1. every flow is summarised into `captures/traffic-*.jsonl`, which is the actual output of
    the M0 spike - it answers "does the Linux client load the Channels H5 page at all";
 2. HTML from the Channels host gets `web/inject.js` appended, and any request under
-   `/__wxclip/` is answered by us instead of being forwarded - that is how the script gets
+   `/__wx-dlh/` is answered by us instead of being forwarded - that is how the script gets
    in and how it reports back;
 3. what it reports (`url`, `url_token`, `decode_key`, `file_size`) is logged verbatim.
 
-mitmproxy is imported lazily so that `import wxclip.proxy` - and therefore the test suite
+mitmproxy is imported lazily so that `import wx_dlh.proxy` - and therefore the test suite
 and CI - works without it. The addon only ever duck-types the flow objects it is handed.
 """
 
@@ -23,9 +23,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from wxclip import __version__, inject
-from wxclip.capture import CaptureError, CaptureLog, format_event, parse_event
-from wxclip.config import Settings
+from wx_dlh import __version__, inject
+from wx_dlh.capture import CaptureError, CaptureLog, format_event, parse_event
+from wx_dlh.config import Settings
 
 #: Hosts we do not try to MITM. WeChat's own transport (mmtls) is not TLS - it
 #: arrives as plain HTTP POSTs to `/mmtls/<id>` with an opaque body, so there is
@@ -74,7 +74,7 @@ class Stats:
         )
 
 
-class WxclipAddon:
+class WxDlhAddon:
     """The whole proxy behaviour, in a form that can be driven by fake flows in tests."""
 
     def __init__(
@@ -99,7 +99,7 @@ class WxclipAddon:
         self.traffic_log = traffic_log
         self.page_dir = page_dir
         self.echo = echo
-        #: Where `wxclip capture` hangs its downloader. Runs on the event loop, so it has
+        #: Where `wx-dlh capture` hangs its downloader. Runs on the event loop, so it has
         #: to hand the work off rather than do it.
         self.on_event = on_event
         self._response_factory = response_factory
@@ -114,15 +114,15 @@ class WxclipAddon:
         elif path == inject.CAPTURE_PATH:
             self._take_capture(flow)
         elif path == inject.PING_PATH:
-            flow.is_wxclip = True
+            flow.is_wx_dlh = True
             flow.response = self._make(
                 200,
-                f"wxclip {__version__} proxy is intercepting {flow.request.pretty_host}\n",
+                f"wx-dlh {__version__} proxy is intercepting {flow.request.pretty_host}\n",
                 {"content-type": "text/plain; charset=utf-8"},
             )
 
     def response(self, flow: Any) -> None:
-        if getattr(flow, "is_wxclip", False):
+        if getattr(flow, "is_wx_dlh", False):
             return
         host = flow.request.pretty_host
         content_type = flow.response.headers.get("content-type", "")
@@ -175,7 +175,7 @@ class WxclipAddon:
     # -- our own endpoints -------------------------------------------------------------
 
     def _serve_script(self, flow: Any) -> None:
-        flow.is_wxclip = True
+        flow.is_wx_dlh = True
         flow.response = self._make(
             200,
             self.script,
@@ -188,7 +188,7 @@ class WxclipAddon:
         self.echo(f"-> served hook script to {flow.request.pretty_host}")
 
     def _take_capture(self, flow: Any) -> None:
-        flow.is_wxclip = True
+        flow.is_wx_dlh = True
         if flow.request.method == "OPTIONS":
             flow.response = self._make(204, b"", self._cors())
             return
@@ -294,8 +294,8 @@ def build_addon(
     save_pages: bool = True,
     echo: Callable[[str], None] = echo_line,
     on_event: Callable[[Any], None] | None = None,
-) -> WxclipAddon:
-    return WxclipAddon(
+) -> WxDlhAddon:
+    return WxDlhAddon(
         script=inject.hook_script(version=__version__, include_snippet=include_snippet),
         page_hosts=page_hosts,
         inject_any_html=inject_any_html,
@@ -339,7 +339,7 @@ def proxy_options(
 def run(
     settings: Settings,
     *,
-    addon: WxclipAddon,
+    addon: WxDlhAddon,
     options: dict[str, Any] | None = None,
     echo: Callable[[str], None] = echo_line,
     on_ready: Callable[[Callable[[], None]], None] | None = None,
@@ -347,7 +347,7 @@ def run(
     """Run the proxy until interrupted. Returns a process exit code.
 
     `on_ready` is handed a stop function once the proxy is listening. It is safe to call
-    from any thread, which is the point: `wxclip capture` downloads on a worker and has to
+    from any thread, which is the point: `wx-dlh capture` downloads on a worker and has to
     be able to bring the proxy down from there when it has what it came for.
     """
     import asyncio
@@ -376,7 +376,7 @@ def run(
         if on_ready is not None:
             on_ready(lambda: loop.call_soon_threadsafe(master.shutdown))
         echo(
-            f"wxclip proxy listening on http://{settings.proxy_host}:{settings.proxy_port} "
+            f"wx-dlh proxy listening on http://{settings.proxy_host}:{settings.proxy_port} "
             "(HTTP proxy; point WeChat at it)\npress ctrl-c to stop"
         )
         await master.run()
@@ -388,7 +388,7 @@ def run(
     return 0
 
 
-def describe(settings: Settings, addon: WxclipAddon, options: dict[str, Any]) -> str:
+def describe(settings: Settings, addon: WxDlhAddon, options: dict[str, Any]) -> str:
     """What `--dry-run` prints: everything the operator needs without binding a port."""
     return json.dumps(
         {

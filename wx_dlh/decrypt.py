@@ -7,7 +7,7 @@ a 4 MB one, and why a resumed download only has to care about the keystream unti
 past HEAD_BYTES.
 
 XOR being its own inverse, `decrypt` and `encrypt` are the same operation here; the names
-in this module all say decrypt because that is the only direction wxclip travels.
+in this module all say decrypt because that is the only direction wx-dlh travels.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from wxclip.keystream import HEAD_BYTES, keystream
+from wx_dlh.keystream import HEAD_BYTES, keystream
 
 #: Enough of the head to tell an mp4 from a still-encrypted mess: `....ftyp`.
 HEAD_SAMPLE = 16

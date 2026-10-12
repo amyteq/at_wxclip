@@ -10,13 +10,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from wxclip import inject
-from wxclip.capture import CaptureLog
-from wxclip.config import Settings
-from wxclip.proxy import (
+from wx_dlh import inject
+from wx_dlh.capture import CaptureLog
+from wx_dlh.config import Settings
+from wx_dlh.proxy import (
     DEFAULT_IGNORE_HOSTS,
     DEFAULT_STREAM_LARGE_BODIES,
-    WxclipAddon,
+    WxDlhAddon,
     proxy_options,
 )
 
@@ -66,7 +66,7 @@ def html_flow(
 
 @pytest.fixture
 def addon(tmp_path):
-    return WxclipAddon(
+    return WxDlhAddon(
         script="/* hook */",
         capture_log=CaptureLog(tmp_path, "captures"),
         traffic_log=CaptureLog(tmp_path, "traffic"),
@@ -82,14 +82,14 @@ def test_serves_the_hook_script_without_going_upstream(addon):
     assert flow.response.status_code == 200
     assert flow.response.content == "/* hook */"
     assert "javascript" in flow.response.headers["content-type"]
-    assert flow.is_wxclip is True
+    assert flow.is_wx_dlh is True
 
 
 def test_answers_the_ping_path_on_any_host(addon):
     flow = FakeFlow(host="example.com", path=inject.PING_PATH)
     addon.request(flow)
     assert flow.response.status_code == 200
-    assert "wxclip" in flow.response.content
+    assert "wx-dlh" in flow.response.content
 
 
 def test_takes_a_capture_and_logs_it(addon):
@@ -268,9 +268,9 @@ def test_options_keep_mitmproxy_from_dialing_out_for_our_own_endpoints(tmp_path)
 
 
 def test_a_capture_is_handed_to_the_event_hook(tmp_path):
-    """`wxclip capture` hangs its downloader here; it runs on the proxy's event loop."""
+    """`wx-dlh capture` hangs its downloader here; it runs on the proxy's event loop."""
     seen = []
-    addon = WxclipAddon(
+    addon = WxDlhAddon(
         script="/* hook */",
         echo=lambda line: None,
         response_factory=make_response,
@@ -295,7 +295,7 @@ def test_a_broken_event_hook_does_not_break_the_capture_channel(tmp_path):
     def explode(event):
         raise RuntimeError("downloader fell over")
 
-    addon = WxclipAddon(
+    addon = WxDlhAddon(
         script="/* hook */",
         echo=said.append,
         response_factory=make_response,

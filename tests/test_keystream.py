@@ -10,7 +10,7 @@ import hashlib
 
 import pytest
 
-from wxclip.keystream import HEAD_BYTES, Isaac64, KeystreamError, keystream, parse_decode_key
+from wx_dlh.keystream import HEAD_BYTES, Isaac64, KeystreamError, keystream, parse_decode_key
 
 #: seed (as the decimal string it must stay) -> sha256 of its 131072-byte keystream.
 GOLDEN = {

@@ -31,7 +31,7 @@ lavfi.scene_score=0.230930
 """
 
 #: `ffprobe -print_format json -show_format -show_streams` on the same file, trimmed to
-#: the fields wxclip reads.
+#: the fields wx-dlh reads.
 PROBE_OUTPUT = """\
 {
   "streams": [

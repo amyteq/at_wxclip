@@ -13,15 +13,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-#: Every wxclip endpoint lives under this path prefix, on whatever host asks for it.
-WXCLIP_PREFIX = "/__wxclip/"
+#: Every wx-dlh endpoint lives under this path prefix, on whatever host asks for it.
+WX_DLH_PREFIX = "/__wx-dlh/"
 SCRIPT_NAME = "inject.js"
-SCRIPT_PATH = WXCLIP_PREFIX + SCRIPT_NAME
-CAPTURE_PATH = WXCLIP_PREFIX + "capture"
-PING_PATH = WXCLIP_PREFIX + "ping"
+SCRIPT_PATH = WX_DLH_PREFIX + SCRIPT_NAME
+CAPTURE_PATH = WX_DLH_PREFIX + "capture"
+PING_PATH = WX_DLH_PREFIX + "ping"
 
 #: Marks an already injected page, so a re-read of the same response stays idempotent.
-MARKER = "data-wxclip"
+MARKER = "data-wx-dlh"
 
 #: Hosts whose HTML gets the hook script. The reference implementation only rewrites
 #: `/web/pages/feed`; on Linux the page path is one of the M0 unknowns, so we take any
@@ -109,7 +109,7 @@ def hook_script(
     """Read `web/inject.js` and fill in what only the proxy knows."""
     template = script_source().read_text(encoding="utf-8")
     return (
-        template.replace("__WXCLIP_CAPTURE_PATH__", capture_path)
-        .replace("__WXCLIP_VERSION__", version)
-        .replace('"__WXCLIP_INCLUDE_SNIPPET__"', "true" if include_snippet else "false")
+        template.replace("__WX_DLH_CAPTURE_PATH__", capture_path)
+        .replace("__WX_DLH_VERSION__", version)
+        .replace('"__WX_DLH_INCLUDE_SNIPPET__"', "true" if include_snippet else "false")
     )

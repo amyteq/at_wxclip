@@ -72,7 +72,7 @@ The template below is written for `amyteq/at_wxclip` and reads as a finished com
 | `<forbidden evidence>` | The values that may never be quoted as evidence | captured media, a `decode_key` value, or proxy CA material |
 | `<reviewer notation>` | How the repository writes the reviewer, distinct from an account GitHub can notify | the agent name without an `@`: `by claude`, `by codex` |
 
-Fill every slot before publishing; an unsubstituted `<slot>` in a published body is a defect, exactly like an unsubstituted permalink. When the resolved repository is not `amyteq/at_wxclip`, fill them from *that* repository's own instructions and never from the third column — importing wxclip's paths, invariants, or check command into another repository's issue publishes instructions its executing session cannot follow. Where the resolved repository has no equivalent for a slot, say so in the comment, report the gap, and leave the requirement in the middle column visible rather than inventing a filling for it.
+Fill every slot before publishing; an unsubstituted `<slot>` in a published body is a defect, exactly like an unsubstituted permalink. When the resolved repository is not `amyteq/at_wxclip`, fill them from *that* repository's own instructions and never from the third column — importing wx-dlh's paths, invariants, or check command into another repository's issue publishes instructions its executing session cannot follow. Where the resolved repository has no equivalent for a slot, say so in the comment, report the gap, and leave the requirement in the middle column visible rather than inventing a filling for it.
 
 ## Template
 
