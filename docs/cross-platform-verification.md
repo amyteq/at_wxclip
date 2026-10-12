@@ -102,7 +102,7 @@ python -m wx_dlh proxy         # 另开一个终端，让它一直跑
 
 - **只设了 `-setsecurewebproxy`（HTTPS），没设 `-setwebproxy`（HTTP）。** 视频号页面是 HTTPS，所以够用；但 `wx-dlh` 的 `/__wx-dlh/*` 也走同源 HTTPS，一致，问题不大 —— 记一笔，别当成遗漏改掉。
 - **`getinfo` 少了连字符。** `networksetup(8)` 的子命令写法是 `-getinfo`，Apple 自己的示例也是 `networksetup -getinfo "Wi-Fi"`；不带连字符的 `getinfo` 不是子命令，按手册的说法 `networksetup` 只会吐用法说明，`IP address:` 那几行根本不会出现。
-- **那条 `grep` 用的是 `\s` 和 `\d`。** `\d` 不是 GNU grep 也不是 BSD grep 的 BRE 语法（那是 PCRE，要 `-P`）。
+- **那条 `grep` 里 `\s` 和 `\d` 两个转义都不是 POSIX BRE。** POSIX BRE 两个都没定义；GNU grep 把 `\s` 当扩展认（等于 `[[:space:]]`），`\d` 不认（告 `stray \ before d`，按字面 `d` 匹配，那是 PCRE 的写法，要 `-P`）。macOS 自带的 grep 认不认 `\s` 要上机确认：按 Apple 公开的 grep 源码（`apple-oss-distributions/grep` 的 `dfa.c`）只特判 `\w`/`\W` 一类，认不出来的转义落到字面字符那条路上，照这个读法 `\s` 在那里只匹配字母 `s`，筛子照样空。**所以修的时候别只换 `\d`** —— 按下面对照组那一行写（`-getinfo` + `grep -E '^IP address: [0-9]'`，字面空格 + 字符类），两个转义一起消掉。
 
 后两处的后果是同一个，而且参考实现自己分不开：那是一条管道，退出码取自 `grep`，所以「`getinfo` 吐用法说明」和「`grep` 语法不对」在它眼里都是「这个服务没有 IP」→ 筛选结果为空 → `networks.length === 0` → `setProxy` 直接 `throw 'no network'`。**上机第一件事就是把这两个原因拆开验**（还没人在 Mac 上跑过，下面是按手册推出来的说法，以机器上的实际输出为准）：
 

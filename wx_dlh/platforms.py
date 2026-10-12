@@ -7,9 +7,12 @@ and they are the whole of issue #11:
     routing   how WeChat's traffic reaches our proxy
     trust     how WeChat comes to accept our CA
 
-Only Linux has been carried end to end (M0, 2026-09-11), and even there both steps are a
-documented human procedure, not code - `docs/M0-runbook.md`. On Windows and macOS the two
-halves stand differently. Trust has `wx-dlh ca --install` (#28, with `scripts/trust-ca.sh`
+Only Linux has been carried end to end (M0, 2026-09-11), and there each half has code
+behind it: trust is `wx-dlh ca --install` plus the LD_PRELOAD spki switch the webview
+needs, routing is the in-app proxy setting plus `scripts/run-wechat-proxied.sh` -
+`docs/M0-runbook.md`. The code is not what made it verified, though; a person watching a
+real client play a video through the proxy is. On Windows and macOS the two halves stand
+differently. Trust has `wx-dlh ca --install` (#28, with `scripts/trust-ca.sh`
 from #23 for a host without wx-dlh), which installs into the keychain or the certificate
 store and reads the store back. Routing has only the reference implementation's path,
 which no one has run. Neither has been watched working against a real WeChat, and this
