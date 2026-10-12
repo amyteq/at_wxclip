@@ -2,6 +2,8 @@
 
 任务：[#27](https://github.com/amyteq/at_wxclip/issues/27)；启动授权：[owner comment](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117371852)；关联决策：[#26 的 D1](https://github.com/amyteq/at_wxclip/issues/26)。开始于 2026-10-12 14:48 AEDT，一天有效工作量上限。工作分支 `dev/redroid-pad-spike`；独立 worktree 位于原 checkout 的 `.claude/worktrees/redroid-pad-spike`，保留原 checkout 的未提交工作。
 
+**手动测试入口：** [Redroid 手动测试清单](redroid-manual-test.md)，包含本机已保留容器的启动、投屏、闪退检查、条件登录/共存/播放与清理步骤。补充要求来自 [owner follow-up](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117679194)。
+
 ## 当前结论
 
 **当前实测组合不能作为 gateway 客户端，停在步骤①的登录前启动验证。** redroid 能启动 Android 13、ABI 包含 ARM64，但官网当前 WeChat 8.0.79 在不同设备属性及有/无代理时均崩溃；官网兼容包 8.0.42 也不能正常启动。官方 Android 13 Google APIs x86_64 AVD revision 17 能启动，却没有 ARM 翻译，安装当前 APK 明确失败。两个环境的 Android 默认 CA 验证都通过，但 WeChat 自身的 CA 信任、平板身份与视频号路径尚未验证。D1：本次组合不可用；更广泛的 pad 路线仍未证实，不能据此断言「视频号必须 hook」，也不能声称已经验证容器化 Linux gateway。
