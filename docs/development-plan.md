@@ -62,15 +62,15 @@
 
 `decrypt.js` 里那 5.2 MB 的 wasm 就是**标准 ISAAC64**：把 `decode_key` 放进结果数组第 0 槽，`randinit` 走带 seed 的那条路径，取值顺序是 `rand()` 的顺序（结果数组从末尾往前），每个 64 位字按**大端**写出，直到 131072 字节。`wx_dlh/keystream.py` 是这个算法的 Python 实现（约 10 ms 一条 keystream），和 `decrypt.js` 的输出逐字节一致。
 
-选它而不是起 Node 子进程，是因为：桥接要求装 Node、还要把不在本仓库里的 5.2 MB 产物找出来指给它，而移植版把整个运行时依赖降到零。风险（移植错了而不自知）由 `evals/README.md` 的黄金样本表挡着：表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次跑都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。`tools/m0-download-decrypt.mjs` 留着，作为一条完全不经过 Python 的独立验证路径。
+选它而不是起 Node 子进程，是因为：桥接要求装 Node、还要把不在本仓库里的 5.2 MB 产物找出来指给它，而移植版什么都不用另装。风险（移植错了而不自知）由 `evals/README.md` 的黄金样本表挡着：表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次跑都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。`tools/m0-download-decrypt.mjs` 留着，作为一条完全不经过 Python 的独立验证路径。
 
 #### 下载用标准库，不引 httpx / aria2c
 
-`urllib.request` 够用：流式读、`Range` 续传、自定义 UA 都有，而 `wx-dlh` 的运行时依赖因此保持为零（`mitmproxy` 只在 `proxy` / `capture` 用得上，仍是 optional）。真需要并行分片再说。落地细节：写 `.part`，写完才改名；`.part` 里存的是**已解密**的字节，所以续传时 `HeadDecryptor` 从该偏移接着套 keystream —— 这条是最容易写错的地方，`tests/test_downloader.py` 用 5 个偏移守着。
+`urllib.request` 够用：流式读、`Range` 续传、自定义 UA 都有，不值得为下载多引一个第三方依赖（`wx-dlh` 唯一的运行时依赖是代理用的 `mitmproxy`，见「技术选型」表下面那段）。真需要并行分片再说。落地细节：写 `.part`，写完才改名；`.part` 里存的是**已解密**的字节，所以续传时 `HeadDecryptor` 从该偏移接着套 keystream —— 这条是最容易写错的地方，`tests/test_downloader.py` 用 5 个偏移守着。
 
 ### M2 — 轻量 web server + 面板
 
-- [x] 本地 HTTP server：捕获列表、代理状态、一键下载 —— `wx-dlh serve`（`wx_dlh/server.py`，标准库 `http.server`，运行时依赖仍然是零）
+- [x] 本地 HTTP server：捕获列表、代理状态、一键下载 —— `wx-dlh serve`（`wx_dlh/server.py`，标准库 `http.server`，不加运行时依赖）
 - [x] `web/` 前端页面（保持朴素，够用即可）—— `web/dashboard.html` + `web/dashboard.js`，原生 DOM，不引框架、不引 CDN、不铺构建工具
 - [x] 与 CLI 复用同一套 `wx-dlh` 代码，不做第二份实现 —— 找记录用 `pipeline`，下载解密用 `downloader`，文件命名用同一个 `suggest_filename`，所以面板和 CLI 看到的是同一批文件
 
@@ -110,7 +110,7 @@
 
 SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 httpx2 → httpcore2 → h11>=0.16，而 `mitmproxy` 把 h11 钉在更低的版本，`uv` 直接解不出来。真要了它，就会变成「能跑 `wx-dlh summarize` 的环境跑不了 `wx-dlh capture`」—— 一个工具裂成两个环境。退回 `anthropic<1` 能共存，但那是上一个大版本，`effort` 那套接口对不上。
 
-所以请求用标准库 `urllib` 发（约三十行：拼 header、POST、读 JSON），和「keystream 移植不桥接」「下载用 urllib 不引 httpx」同一个取舍——**运行时依赖保持为零**。mitmproxy 哪天放开 h11 的钉子，这三十行换成 SDK 即可，理由记在 `wx_dlh/summarize.py` 的模块注释里。
+所以请求用标准库 `urllib` 发（约三十行：拼 header、POST、读 JSON），和「keystream 移植不桥接」「下载用 urllib 不引 httpx」同一个取舍——**除了 mitmproxy，不引第三方运行时依赖**。mitmproxy 哪天放开 h11 的钉子，这三十行换成 SDK 即可，理由记在 `wx_dlh/summarize.py` 的模块注释里。
 
 `pyproject.toml` 里因此**没有** `summarize` extra，那里留了一条注释说明原因，免得下一个人以为是漏了。
 
@@ -118,13 +118,15 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 
 | 环节 | 候选 | 取舍要点 |
 |------|------|----------|
-| MITM 代理 | **已定：`mitmproxy`**（optional 依赖 `.[proxy]`） | 能改写响应体、自带 CA 管理与 flow 存档；`wx_dlh.proxy` 只是一个 addon，mitmproxy 延迟导入，测试与 CI 不依赖它 |
+| MITM 代理 | **已定：`mitmproxy`**（唯一的运行时依赖，见表下） | 能改写响应体、自带 CA 管理与 flow 存档；`wx_dlh.proxy` 只是一个 addon，mitmproxy 延迟导入，其余子命令和 handler 的测试都不碰它 |
 | CA 信任 | 系统 CA 目录 / NSS / 客户端自带校验 | 本机 WeChat 是 Flatpak：宿主机 `update-ca-trust` 它看不到（runtime 自带证书包），webview 是 Chromium 内核、用 NSS 库。`scripts/trust-ca.sh` 三个位置都覆盖，哪个生效 M0 验 |
 | keystream | **已定：移植 ISAAC64 到 Python**（`wx_dlh/keystream.py`） | 与 `decrypt.js` 输出逐字节一致，Node 与 5.2 MB wasm 都不再需要；黄金样本表守着移植的正确性 |
-| 下载 | **已定：标准库 `urllib.request`** | 流式 + `Range` 续传够用，运行时依赖保持为零；`.part` 里是已解密字节，续传按偏移接 keystream |
-| web server | **已定：标准库 `http.server`** | 面板很薄，不值得为它引入大框架；`ThreadingHTTPServer` 够用，运行时依赖因此保持为零 |
+| 下载 | **已定：标准库 `urllib.request`** | 流式 + `Range` 续传够用，不加运行时依赖；`.part` 里是已解密字节，续传按偏移接 keystream |
+| web server | **已定：标准库 `http.server`** | 面板很薄，不值得为它引入大框架；`ThreadingHTTPServer` 够用，不加运行时依赖 |
 | 截屏/提取 | **已定：`ffmpeg` 场景检测 + `tesseract` OCR** | 两个都是外部命令，不进 Python 依赖；OCR 只是给已有的截屏多调一次，不下模型、不要 GPU。语音转写留作下一条路 |
 | 总结 | **已定：标准库 `urllib` 直发 Messages API** | anthropic SDK 与 mitmproxy 的 h11 版本冲突，装了就会把 capture 和 summarize 拆成两个环境；prompt 跟着包走，样本在 `evals/summarize/` |
+
+**运行时依赖只有 `mitmproxy` 一个。** 原先连它也是 optional（`.[proxy]`），运行时依赖是零。为发 PyPI（`docs/pypi-publishing.md`），2026-10 在 [#24 的 review](https://github.com/amyteq/at_wxclip/pull/24#discussion_r4244264446) 里定下把它挪进 `dependencies`：`pip install wx-dlh` 一条命令就能 `capture`，和 `pip install yt-dlp` 一样，不用再记 `[proxy]`。代价是 CI 和 `make setup` 都会装上它，原来跳过的那几条要 mitmproxy 的测试现在每次都跑。其余取舍不变：下载、面板、总结仍走标准库，截屏和 OCR 仍是外部命令；再加任何第三方运行时依赖，都要在 PR 里写明理由。
 
 ## 边界
 

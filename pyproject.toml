@@ -3,8 +3,15 @@ name = "wx-dlh"
 dynamic = ["version"]
 description = "Capture, decrypt and download WeChat Channels videos playable in your own WeChat client"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Harry Sun", email = "harrysun2006@gmail.com" }]
 requires-python = ">=3.11"
-dependencies = []
+# The only third-party runtime dependency, and on purpose: `capture` / `proxy` need a MITM
+# engine that can rewrite response bodies, and mitmproxy also manages the CA. It is a
+# default rather than an extra so that `pip install wx-dlh` is a working tool in one step.
+# Everything else is the standard library or an external binary (ffmpeg, tesseract).
+dependencies = ["mitmproxy>=11,<13"]
 keywords = ["wechat", "weixin", "channels", "video", "downloader", "mitmproxy"]
 # Only what has been run: Linux end to end, and the Python versions the wheel was installed
 # and smoke-tested on. Widen these as macOS / Windows (#11) and newer Pythons get verified.
@@ -18,8 +25,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Video",
 ]
-# `license` and `authors` are for the owner to decide before the first upload; until then
-# PyPI would show none. See docs/pypi-publishing.md.
 
 [project.urls]
 Homepage = "https://github.com/amyteq/at_wxclip"
@@ -27,19 +32,16 @@ Issues = "https://github.com/amyteq/at_wxclip/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
-# The proxy needs a MITM engine that can rewrite response bodies; mitmproxy also
-# manages the CA. Kept optional so the test suite and CI stay free of it.
-proxy = ["mitmproxy>=11,<13"]
 # There is deliberately no `summarize` extra: the anthropic SDK cannot be installed
 # beside mitmproxy (it needs httpx2 -> httpcore2 -> h11>=0.16, which mitmproxy pins
-# below), so `wx-dlh summarize` would not run in the same venv as `wx-dlh capture`.
+# below), so it would not even resolve against wx-dlh's own dependency.
 # It posts to the Messages API with stdlib urllib instead - see wx_dlh/summarize.py.
 
 [project.scripts]
 wx-dlh = "wx_dlh.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]  # 1.27: `license` as an SPDX expression and `license-files`
 build-backend = "hatchling.build"
 
 # One version, in wx_dlh/__init__.py: `wx-dlh --version`, the dashboard and the package
@@ -72,6 +74,7 @@ include = [
     "/scripts",
     "/tools/check-inject.mjs",
     "/README.md",
+    "/LICENSE",
 ]
 
 [tool.ruff]
