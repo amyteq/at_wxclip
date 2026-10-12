@@ -17,7 +17,7 @@ WORKDIR /src
 COPY . .
 # A venv, so the runtime stage takes the installed tool and leaves the build backend and
 # the source tree behind. Both stages share the base image, so its interpreter path holds.
-RUN python -m venv /opt/wx-dlh && /opt/wx-dlh/bin/pip install ".[proxy]"
+RUN python -m venv /opt/wx-dlh && /opt/wx-dlh/bin/pip install .
 
 FROM ${PYTHON_IMAGE}
 # ffmpeg and tesseract are only for `wx-dlh process` / `shots` (post-processing): the

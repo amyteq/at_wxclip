@@ -9,8 +9,9 @@ Three things happen here, and the middle one is why a passive sniffer is not eno
    in and how it reports back;
 3. what it reports (`url`, `url_token`, `decode_key`, `file_size`) is logged verbatim.
 
-mitmproxy is imported lazily so that `import wx_dlh.proxy` - and therefore the test suite
-and CI - works without it. The addon only ever duck-types the flow objects it is handed.
+mitmproxy is imported lazily: it is a dependency, but a heavy one, and the addon only ever
+duck-types the flow objects it is handed - so `import wx_dlh.proxy`, every other subcommand
+and the tests of the handlers stay fast and never touch it.
 """
 
 from __future__ import annotations
