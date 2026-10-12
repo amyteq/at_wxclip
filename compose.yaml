@@ -1,0 +1,88 @@
+# wx-dlh as compose services. The host side - trusting the CA, pointing WeChat at the
+# proxy - is in docs/docker.md; a container cannot do that part.
+#
+#   docker compose up -d --build        proxy on 127.0.0.1:8899, dashboard on http://127.0.0.1:8080
+#   docker compose logs -f proxy        watch the hook load and captures come in
+#   docker compose run --rm cli download --list
+#   docker compose down
+#
+# Settings, from the shell or a .env file next to this one (all optional):
+#   WX_DLH_CA_HOST_DIR    the CA on the host. Default ~/.config/wx-dlh/ca - the directory
+#                         a native install uses, so a CA you already trust keeps working
+#   WX_DLH_BIND           host address the ports are published on (default 127.0.0.1;
+#                         0.0.0.0 exposes an unauthenticated proxy to your network)
+#   WX_DLH_PROXY_PORT     proxy port, on the host and in the container (default 8899)
+#   WX_DLH_SERVER_PORT    dashboard port, likewise (default 8080)
+#   WX_DLH_UID/WX_DLH_GID who files are written as (default: whoever owns the mounts)
+#   WX_DLH_MEDIA_TOOLS=1  build with ffmpeg and tesseract, for `process` / `shots`
+
+name: wx-dlh
+
+x-wx-dlh: &wx-dlh
+  build:
+    context: .
+    args:
+      WITH_MEDIA_TOOLS: ${WX_DLH_MEDIA_TOOLS:-0}
+  image: wx-dlh:local
+  init: true  # forwards SIGTERM, so `down` stops the proxy cleanly and flushes its logs
+  environment:
+    WX_DLH_UID: ${WX_DLH_UID:-}
+    WX_DLH_GID: ${WX_DLH_GID:-}
+    WX_DLH_PROXY_PORT: ${WX_DLH_PROXY_PORT:-8899}
+    WX_DLH_SERVER_PORT: ${WX_DLH_SERVER_PORT:-8080}
+  volumes:
+    - ${WX_DLH_CA_HOST_DIR:-~/.config/wx-dlh/ca}:/data/ca
+    - ./captures:/data/captures
+    - ./downloads:/data/downloads
+    - ./processed:/data/processed
+
+services:
+  # The MITM proxy WeChat points at. It owns the network namespace the dashboard shares,
+  # so both ports are published here.
+  proxy:
+    <<: *wx-dlh
+    command: ["proxy", "--host", "0.0.0.0"]
+    ports:
+      - "${WX_DLH_BIND:-127.0.0.1}:${WX_DLH_PROXY_PORT:-8899}:${WX_DLH_PROXY_PORT:-8899}"
+      - "${WX_DLH_BIND:-127.0.0.1}:${WX_DLH_SERVER_PORT:-8080}:${WX_DLH_SERVER_PORT:-8080}"
+    healthcheck:
+      # A bare TCP connect. Asking for /__wx-dlh/ping would prove the addon is loaded, but
+      # every probe would also land in the flow dump (~1.7 KB each, ~5 MB a day).
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, socket;
+          socket.create_connection(("127.0.0.1", int(os.environ["WX_DLH_PROXY_PORT"])), 3).close()
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # Lists what the proxy captured and downloads it into ./downloads. Shares the proxy's
+  # network, so its proxy status probe (127.0.0.1) and the address it shows are the ones
+  # WeChat uses.
+  dashboard:
+    <<: *wx-dlh
+    command: ["serve", "--host", "0.0.0.0"]
+    network_mode: service:proxy
+    depends_on:
+      proxy:
+        condition: service_healthy
+
+  # `wx-dlh capture` instead of proxy + dashboard: listen, download what gets played, exit.
+  # It takes the proxy port, so stop the other two first:
+  #   docker compose stop && docker compose run --rm --service-ports capture --count 1
+  capture:
+    <<: *wx-dlh
+    profiles: [capture]
+    entrypoint: ["wx-dlh-entrypoint", "capture", "--host", "0.0.0.0"]
+    command: []
+    ports:
+      - "${WX_DLH_BIND:-127.0.0.1}:${WX_DLH_PROXY_PORT:-8899}:${WX_DLH_PROXY_PORT:-8899}"
+
+  # Any other subcommand, against the same directories: `docker compose run --rm cli <args>`.
+  cli:
+    <<: *wx-dlh
+    profiles: [cli]

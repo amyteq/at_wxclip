@@ -1,0 +1,12 @@
+# Allowlist: the image is built from the package and the web assets it serves, nothing
+# else. In particular no .env, no captures, downloads or CA material, no .venv, no .git.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!wx_dlh/
+!web/inject.js
+!web/dashboard.html
+!web/dashboard.js
+!scripts/docker-entrypoint.sh
+**/__pycache__
