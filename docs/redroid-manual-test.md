@@ -1,6 +1,6 @@
 # Redroid 手动测试（#27 / PR #29）
 
-按 [owner 的补充要求](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117679194) 提供。这份清单用于 owner 在本机桌面亲自检查；完整安装与失败证据见 [spike runbook](redroid-pad-spike.md)。当前 8.0.79 自动启动测试会闪退，所以先检查能否稳定打开，再决定是否登录；本文后半段是尚未执行的条件步骤。
+按 [owner 的补充要求](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117679194) 提供。这份清单用于 owner 在本机桌面亲自检查；完整安装与失败证据见 [#30 的 spike runbook](https://github.com/amyteq/at_wxclip/issues/30)。当前 8.0.79 自动启动测试会闪退，所以先检查能否稳定打开，再决定是否登录；本文后半段是尚未执行的条件步骤。
 
 ## 1. 启动已保留的平板
 
@@ -106,7 +106,7 @@ ss -ltn 'sport = :8899'
 openssl x509 -in /home/harry/.local/share/wx-dlh/redroid-27/ca/mitmproxy-ca-cert.pem -subject_hash_old -noout
 ```
 
-hash 必须是本次的 `c8750f0d`；若 CA 或网桥已变化，按 [runbook 第 3 节](redroid-pad-spike.md#3-代理与系统-ca) 重新核对，不能直接沿用下面的文件名或地址。
+hash 必须是本次的 `c8750f0d`；若 CA 或网桥已变化，按 [#30 runbook 第 3 节「代理与系统 CA」](https://github.com/amyteq/at_wxclip/issues/30#3-代理与系统-ca) 重新核对，不能直接沿用下面的文件名或地址。
 
 ```bash
 adb -s 127.0.0.1:5555 root
@@ -117,7 +117,7 @@ adb -s 127.0.0.1:5555 shell settings put global http_proxy 172.17.0.1:8899
 adb -s 127.0.0.1:5555 shell settings get global http_proxy
 ```
 
-如需重验 Android 的 CA 信任，完整重跑 runbook 第 3 节的探针编译与执行；不要复用可能为 AVD 地址编译的旧 dex。`adb root` 若断开投屏，重新运行第 2 节。重新打开微信，在自己有权观看的视频号内容中只播放一个普通视频，记录开始/结束时间和能否播放；不做批量或无人值守播放。Android 默认 CA 通过不保证微信接受 CA，若出现网络或证书错误，应记录并停止。
+如需重验 Android 的 CA 信任，完整重跑 #30 runbook 第 3 节的探针编译与执行；不要复用可能为 AVD 地址编译的旧 dex。`adb root` 若断开投屏，重新运行第 2 节。重新打开微信，在自己有权观看的视频号内容中只播放一个普通视频，记录开始/结束时间和能否播放；不做批量或无人值守播放。Android 默认 CA 通过不保证微信接受 CA，若出现网络或证书错误，应记录并停止。
 
 在 #27 回报一次播放结果后，可据该时间窗口检查 media host、H5 页数、`probe.has_bridge` 事件数，以及必要时的 proxy-visible key 来源；只报告 host / content-type / 布尔值 / 计数，不上传含查询参数的完整 URL、key 值、原始流量、页面或媒体。未播放成功或未确认身份时，不能将零事件写成「无 H5/bridge/key」。
 
