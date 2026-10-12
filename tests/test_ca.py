@@ -1,7 +1,9 @@
 """CA file naming, creation, fingerprints, and the move from the pre-rename directory."""
 
 import base64
+import shutil
 import ssl
+import subprocess
 
 import pytest
 
@@ -72,14 +74,109 @@ def test_a_length_not_written_the_way_der_requires_is_refused(tmp_path):
     assert ca.fingerprint(rewritten) == ""
 
 
+#: The three values a certificate is - tbsCertificate, signatureAlgorithm, signatureValue -
+#: with nothing in any of them. No real certificate is this small, which is why these bytes
+#: only ever reach `_check_one_der_value` directly: through `cert_der` the parse comes
+#: first, and refuses them as no certificate at all.
+SHAPE = b"\x30\x00" + b"\x30\x00" + b"\x03\x00"
+
+
 def test_the_short_form_is_the_only_one_where_it_fits():
-    """The other half of the same rule, and the check is the only place it can be shown:
-    no X.509 certificate is under 128 bytes long, so nothing this short ever reaches it
-    through `cert_der` - the parse comes first, and refuses it as no certificate at all."""
-    ca._check_one_der_value(b"\x30\x05" + b"\x00" * 5)  # the short form, as DER wants it
-    for spelling in (b"\x30\x81\x05", b"\x30\x82\x00\x05"):  # long form, padded long form
+    """The other half of the same rule, and the check is the only place it can be shown."""
+    ca._check_one_der_value(b"\x30\x06" + SHAPE)  # the short form, as DER wants it
+    for spelling in (b"\x30\x81\x06", b"\x30\x82\x00\x06"):  # long form, padded long form
         with pytest.raises(ValueError, match="DER requires"):
-            ca._check_one_der_value(spelling + b"\x00" * 5)
+            ca._check_one_der_value(spelling + SHAPE)
+
+
+@pytest.mark.parametrize(
+    ("tbs", "alg", "sig", "refused"),
+    [
+        (b"\x30\x00", b"\x30\x81\x00", b"\x03\x00", True),
+        (b"\x30\x00", b"\x30\x03\x06\x81\x00", b"\x03\x00", True),
+        (b"\x30\x00", b"\x30\x00", b"\x03\x81\x00", True),
+        (b"\x30\x03\x05\x81\x00", b"\x30\x00", b"\x03\x00", False),
+    ],
+    ids=["signatureAlgorithm", "inside signatureAlgorithm", "signatureValue", "in tbsCertificate"],
+)  # fmt: skip
+def test_the_lengths_openssl_rewrites_are_the_ones_refused(tbs, alg, sig, refused):
+    """A padded length is refused wherever openssl would rewrite it - however deeply nested
+    - and taken where openssl would not. It does not rewrite tbsCertificate: it keeps the
+    encoding it read there, signature and all, so those bytes reach the fingerprint exactly
+    as the file holds them and nothing here disagrees with openssl about them."""
+    body = tbs + alg + sig
+    der = b"\x30" + bytes([len(body)]) + body
+    if not refused:
+        ca._check_one_der_value(der)
+        return
+    with pytest.raises(ValueError, match="DER requires"):
+        ca._check_one_der_value(der)
+
+
+def _length(size: int, pad: int = 0) -> bytes:
+    """How DER writes `size`, with `pad` zero bytes in front of it that nobody needs."""
+    if size < 0x80 and not pad:
+        return bytes([size])
+    body = size.to_bytes(max(1, (size.bit_length() + 7) // 8), "big")
+    return bytes([0x80 | (len(body) + pad)]) + bytes(pad) + body
+
+
+def _seq(body: bytes, pad: int = 0) -> bytes:
+    """A SEQUENCE around `body`, its length padded by `pad` bytes nobody needs."""
+    return b"\x30" + _length(len(body), pad) + body
+
+
+def _padded(value: bytes) -> bytes:
+    """One DER value with a zero byte added to its length: the same value, spelled the one
+    way DER does not allow. Every tag a certificate uses is a single byte."""
+    content, finish = ca._der_value(value, 0, len(value))
+    return value[:1] + _length(finish - content, 1) + value[content:finish]
+
+
+def _openssl(der: bytes, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["openssl", "x509", "-inform", "DER", *args], input=der, capture_output=True
+    )
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="the comparison is with openssl")
+@pytest.mark.parametrize(
+    "where", ["outer", "tbsCertificate", "signatureAlgorithm", "signatureValue"]
+)  # fmt: skip
+def test_a_padded_length_is_taken_exactly_where_openssl_keeps_it(tmp_path, where):
+    """The rule is openssl's, and this is the comparison that says so: a certificate is
+    taken exactly when `openssl x509 -outform DER` writes the same bytes back, and then
+    `digest` prints the fingerprint openssl prints. `scripts/trust-ca.sh` makes that very
+    comparison, so the port's two halves accept and fingerprint the same files. Which
+    position lands on which side is openssl's business, not this test's - it only asks
+    that the two agree."""
+    pytest.importorskip("mitmproxy")
+    der = ssl.PEM_cert_to_DER_cert(ca.ensure_ca(tmp_path / "ca").read_text())
+    content, end = ca._der_value(der, 0, len(der))
+    parts, at = [], content
+    while at < end:  # tbsCertificate, signatureAlgorithm, signatureValue
+        _, finish = ca._der_value(der, at, end)
+        parts.append(der[at:finish])
+        at = finish
+    tbs, alg, sig = parts
+    if where == "outer":
+        variant = _seq(tbs + alg + sig, 1)
+    elif where == "tbsCertificate":  # on the first value inside it, under the kept encoding
+        inside, stop = ca._der_value(tbs, 0, len(tbs))
+        _, first_end = ca._der_value(tbs, inside, stop)
+        variant = _seq(_seq(_padded(tbs[inside:first_end]) + tbs[first_end:stop]) + alg + sig)
+    elif where == "signatureAlgorithm":
+        variant = _seq(tbs + _padded(alg) + sig)
+    else:
+        variant = _seq(tbs + alg + _padded(sig))
+
+    written = _openssl(variant, "-outform", "DER")
+    if written.returncode == 0 and written.stdout == variant:  # openssl keeps these bytes
+        printed = _openssl(variant, "-noout", "-fingerprint", "-sha256").stdout.decode()
+        assert ca.digest(ca.cert_der(_block(variant))) == printed.strip().partition("=")[2]
+    else:  # openssl would fingerprint bytes the file does not hold
+        with pytest.raises(ValueError):
+            ca.cert_der(_block(variant))
 
 
 def test_what_sits_outside_the_block_is_not_part_of_the_certificate(tmp_path):
