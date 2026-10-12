@@ -17,6 +17,10 @@ module exists so that is stated out loud. `wx-dlh ca` once probed `flatpak` and
 `certutil` whichever platform it was on, so a macOS user got three unavailable Linux
 stores and Linux-only commands to run - wrong in a way that looks like a working answer.
 `wx_dlh.trust` now picks the stores by OS; what it cannot say is whether WeChat reads them.
+Which machine that OS belongs to is one question, not two, so `current()` asks
+`trust.detect_os()` rather than reading `sys.platform` a second way: under WSL both
+answer Windows, because WeChat runs on the host and it is the host's routing and the
+host's certificate store that have to work.
 
 Nothing here sets a proxy or installs a certificate, and `verified` stays False until a
 real client has been driven through the proxy. A store that lists the CA is not yet a
@@ -29,6 +33,8 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+
+from wx_dlh import trust
 
 LINUX = "linux"
 MACOS = "macos"
@@ -47,17 +53,28 @@ ISSUE = "https://github.com/amyteq/at_wxclip/issues/11"
 def current(raw: str | None = None) -> str:
     """Normalise `sys.platform` to one of the four names above.
 
+    Asked about this machine, this is `trust.detect_os()` - the same answer the trust
+    stores are picked by, so the status line and the store list under it cannot describe
+    two different machines. It matters for WSL alone: `sys.platform` is linux there, and
+    the machine that has to be routed and has to trust the CA is the Windows host. A WSL
+    host is therefore an unverified Windows host, which is what it is.
+
     `raw` is for tests: the whole point of this module is behaviour that cannot be
-    exercised on the machine it was written on. It accepts an already-normalised name
+    exercised on the machine it was written on. An explicit name is a deliberate claim,
+    taken at face value and never probed for WSL. It accepts an already-normalised name
     too, so that a `platform=` argument can be handed down through several callers
     without anyone having to track whether it has been through here yet.
     """
-    value = sys.platform if raw is None else raw
-    if value.startswith("linux") or value == LINUX:
+    if raw is None:
+        try:
+            return trust.detect_os()
+        except trust.TrustError:  # a platform `detect_os` has no stores for
+            return UNKNOWN
+    if raw.startswith("linux") or raw == LINUX:
         return LINUX
-    if value == "darwin" or value == MACOS:
+    if raw == "darwin" or raw == MACOS:
         return MACOS
-    if value in ("win32", "cygwin", "msys") or value == WINDOWS:
+    if raw in ("win32", "cygwin", "msys") or raw == WINDOWS:
         return WINDOWS
     return UNKNOWN
 
@@ -136,16 +153,28 @@ def is_verified(platform: str | None = None) -> bool:
     return known is not None and known.verified
 
 
+def _asked_from_wsl(raw: str | None, platform: str) -> bool:
+    """Did asking about this machine answer Windows from a Linux shell - i.e. is this WSL?
+
+    Only when nobody named a platform: `status_line("win32")` is already a claim about
+    Windows, and the suite that makes it is not running under WSL.
+    """
+    return raw is None and platform == WINDOWS and trust.is_wsl()
+
+
 def status_line(platform: str | None = None) -> str:
     """One line for the top of `wx-dlh proxy --dry-run` and friends."""
     name = current(platform)
     known = support(name)
     if known is None:
         return f"platform: {sys.platform} - not considered; issue #11 covers Windows and macOS"
+    # From inside WSL a bare "Windows" reads as a misdetection, so say which machine is
+    # meant: the host, because that is where WeChat and its certificate store are.
+    label = known.name + (" host (from WSL)" if _asked_from_wsl(platform, name) else "")
     if known.verified:
-        return f"platform: {known.name} - verified end to end, steps in {known.doc}"
+        return f"platform: {label} - verified end to end, steps in {known.doc}"
     return (
-        f"platform: {known.name} - NOT verified; routing is unimplemented and CA trust "
+        f"platform: {label} - NOT verified; routing is unimplemented and CA trust "
         f"({TRUST_COMMAND}) is untested against a real WeChat (issue #11)"
     )
 

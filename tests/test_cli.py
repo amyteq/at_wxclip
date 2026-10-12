@@ -1,6 +1,7 @@
 """CLI surface: what is wired up, what is still a placeholder."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,73 @@ def test_a_verified_platform_says_nothing(monkeypatch, capsys):
     monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: True)
     _warn_unverified_platform()
     assert capsys.readouterr().err == ""
+
+
+LISTENING = "<the proxy would bind its port here>"
+
+
+@pytest.fixture
+def never_listens(monkeypatch):
+    """Stand in for the proxy runner - a test binds no port. It marks the moment the proxy
+    would come up, so the warning's *placement* can be asserted and not just its text:
+    past that line the operator is looking at WeChat, not at the terminal."""
+    runs = []
+
+    def run(settings, **kwargs):
+        print(LISTENING, file=sys.stderr)
+        runs.append(settings)
+        return 0
+
+    monkeypatch.setattr("wx_dlh.proxy.run", run)
+    return runs
+
+
+def proxy_argv(command: str, tmp_path: Path) -> list[str]:
+    """`proxy` or `capture` with everything either of them writes to under tmp_path."""
+    argv = [
+        command,
+        "--port",
+        "18897",
+        "--ca-dir",
+        str(tmp_path / "ca"),
+        "--capture-dir",
+        str(tmp_path / "captures"),
+    ]
+    if command == "capture":
+        argv += ["--dir", str(tmp_path / "downloads")]
+    return argv
+
+
+@pytest.mark.parametrize("command", ["proxy", "capture"])
+def test_both_runners_warn_before_the_proxy_listens(
+    command, tmp_path, monkeypatch, capsys, never_listens
+):
+    """The helper above being right is half of it; the two call sites are the other half.
+    Neither may drop the warning, and neither may leave it until the proxy is already up -
+    by then the operator has gone to play a video and the terminal is scrolling flows."""
+    pytest.importorskip("mitmproxy")
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: False)
+    monkeypatch.setattr(platforms, "current", lambda *a, **k: platforms.WINDOWS)
+    main(proxy_argv(command, tmp_path))
+    err = capsys.readouterr().err
+    assert len(never_listens) == 1
+    assert platforms.PLAYBOOK in err
+    assert err.index("NOT verified") < err.index(LISTENING)
+
+
+@pytest.mark.parametrize("command", ["proxy", "capture"])
+def test_a_dry_run_has_no_listener_to_warn_about(
+    command, tmp_path, monkeypatch, capsys, never_listens
+):
+    """--dry-run binds nothing, so there is no silent no-capture to warn about - and its
+    output is parsed as JSON, which a warning in front of it would break."""
+    pytest.importorskip("mitmproxy")
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: False)
+    monkeypatch.setattr(platforms, "current", lambda *a, **k: platforms.WINDOWS)
+    assert main([*proxy_argv(command, tmp_path), "--dry-run"]) == 0
+    captured = capsys.readouterr()
+    assert never_listens == []
+    assert "NOT verified" not in captured.out + captured.err
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ Modules (see docs/development-plan.md):
     pipeline    - capture event -> chosen media -> downloaded, decrypted file
     server      - light web server backing the admin / download dashboard
     trust       - the CA into (and out of) the trust stores WeChat reads, per OS
+    platforms   - which host platform this is, and what routing and trust take there
     ca, config, inject - the CA, settings, and what gets injected where
 
 Post-processing, on a file that is already playable (M3):

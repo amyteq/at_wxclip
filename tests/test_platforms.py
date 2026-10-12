@@ -8,7 +8,7 @@ stays False. See `docs/cross-platform-verification.md` and issue #11.
 
 import pytest
 
-from wx_dlh import platforms
+from wx_dlh import platforms, trust
 
 
 @pytest.mark.parametrize(
@@ -42,6 +42,43 @@ def test_current_with_no_argument_answers_for_this_machine():
         platforms.WINDOWS,
         platforms.UNKNOWN,
     )
+
+
+@pytest.mark.parametrize("raw", ["linux", "darwin", "win32"])
+def test_current_names_the_same_os_as_the_trust_stores(raw):
+    """`wx-dlh ca` prints this platform's status immediately above the stores `trust`
+    picked for it. Two mappings would be two machines in one output."""
+    assert platforms.current(raw) == trust.detect_os(raw, wsl=False)
+
+
+@pytest.fixture
+def wsl(monkeypatch):
+    """A Linux shell on a Windows host. Both halves have to be faked: this machine is not
+    WSL, and `trust.detect_os`'s default platform was bound to `sys.platform` at import,
+    so it cannot be moved by patching `sys` either."""
+    monkeypatch.setattr(trust, "is_wsl", lambda *a, **k: True)
+    detect_os = trust.detect_os
+    monkeypatch.setattr(trust, "detect_os", lambda *a, **k: detect_os("linux"))
+
+
+def test_wsl_is_the_windows_host_it_routes_to(wsl):
+    """`sys.platform` says linux and WeChat is not there - it runs on the host, whose
+    routing is unimplemented and whose certificate store nothing has watched work. Calling
+    that a verified Linux machine suppresses the one warning this module exists to print."""
+    assert platforms.current() == platforms.WINDOWS
+    assert platforms.is_verified() is False
+    line = platforms.status_line()
+    assert "NOT verified" in line
+    assert "WSL" in line  # "Windows" from a Linux shell, unexplained, looks like a bug
+    assert "not verified on Windows" in platforms.unsupported_note()
+
+
+def test_an_explicit_platform_is_still_taken_at_face_value_under_wsl(wsl):
+    """`current(raw)` stays a pure mapping: the suite has to be able to ask about Linux
+    from a machine that is not Linux."""
+    assert platforms.current("linux") == platforms.LINUX
+    assert platforms.is_verified("linux") is True
+    assert "WSL" not in platforms.status_line("win32")
 
 
 @pytest.mark.parametrize(("raw", "name"), [("darwin", "macOS"), ("win32", "Windows")])

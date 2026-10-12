@@ -83,6 +83,8 @@ python -m wx_dlh proxy         # 另开一个终端，让它一直跑
 
 然后按上面「四道关」逐关推进：设注册表 → 看第 1 关 → 装证书（`wx-dlh ca --install`，在 PowerShell / cmd 或 WSL 里跑都行，默认进 `CurrentUser\Root`；本机没装 wx-dlh 就在 Git Bash / MSYS2 / Cygwin 或 WSL 里跑 `scripts/trust-ca.sh`，参数相同）+ 重启 WeChat → 看第 2 关 → 播一个视频号视频 → 看第 3、4 关。每一关的结论填进本文末尾的登记表。
 
+**在 WSL 里跑的也算 Windows。** `sys.platform` 是 linux，但 WeChat、要写的注册表、要装的证书库都在宿主机上，所以 `platforms.current()` 直接取 `trust.detect_os()` 的答案（`wx_dlh/platforms.py`）：状态行写 `Windows host (from WSL)`，`wx-dlh proxy` / `capture` 一样提示没验证过。四道关的证据仍然看 WSL 里代理写出来的 `captures/`，但每一关要动的东西都在宿主机那边。
+
 ## macOS
 
 ### 参考实现做什么（同日核对）
