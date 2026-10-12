@@ -98,7 +98,7 @@
 
 同上，位置先开着。参考实现的做法：
 
-- **代理设置**：`networksetup -listallnetworkservices` 列出网络服务，筛出有 IP 的，逐个 `networksetup -setsecurewebproxy "<服务>" <host> <port>`；撤销用 `-setsecurewebproxystate "<服务>" off`。**只设了 HTTPS 代理，没设 HTTP 代理。** 它筛选网络服务用的那条 `grep "^IP address:\s\d"` 里 `\d` 不是 BRE 语法，很可能一个都筛不出来（筛空会让 `setProxy` 直接抛 `no network`）—— 上机第一件事就是验这条，别照抄。
+- **代理设置**：`networksetup -listallnetworkservices` 列出网络服务，筛出有 IP 的，逐个 `networksetup -setsecurewebproxy "<服务>" <host> <port>`；撤销用 `-setsecurewebproxystate "<服务>" off`。**只设了 HTTPS 代理，没设 HTTP 代理。** 它筛网络服务的那一行 `networksetup getinfo "<服务>" | grep "^IP address:\s\d"` 有**两处**毛病：`getinfo` 少了连字符（`networksetup(8)` 的子命令写作 `-getinfo`），`\d` 也不是 BRE 语法（那是 PCRE）；两处都会让这条管道判成「这个服务没有 IP」，筛空后 `setProxy` 直接抛 `no network`。还没人在 Mac 上跑过，上机第一件事就是把两个原因拆开验（命令与判定见 `docs/cross-platform-verification.md` 的 macOS 一节），别照抄。
 - **CA 安装**：**它不自动装**。把 `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <cert>` 复制到剪贴板，弹窗让人自己粘到终端跑。
 
 未知同 Windows：webview 走不走系统代理、查不查系统钥匙串。另外参考实现的注释说 macOS 的 `err_msg` 是 `finderH5ExtTransfer:ok`，而 Linux 实测是「api 名同 macOS、`err_msg` 同 Windows」的混血，所以这一条在 macOS 上也要实测确认，不要照搬注释。
