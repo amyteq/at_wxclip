@@ -55,13 +55,31 @@ def test_trust_hint_off_linux_still_names_the_certificate(tmp_path, platform):
     assert str(ca.key_path(tmp_path)) in hint
 
 
-@pytest.mark.parametrize("platform", ["darwin", "win32", "freebsd13"])
-def test_trust_hint_off_linux_sends_people_to_the_playbook_not_to_a_linux_script(
+@pytest.mark.parametrize("platform", ["darwin", "win32"])
+def test_trust_hint_on_macos_and_windows_names_the_script_and_says_it_is_unverified(
     tmp_path, platform
 ):
+    """trust-ca.sh covers the keychain and the certificate store since #23, so it is the
+    thing to run - but no real WeChat has accepted the CA through it yet, and the hint
+    has to say that in the same breath, next to the checks that would show it."""
     hint = ca.trust_hint(tmp_path, platform=platform)
+    assert "scripts/trust-ca.sh" in hint
+    assert "never watched against a real WeChat" in hint
+    assert platforms.PLAYBOOK in hint
+    assert platforms.ISSUE in hint
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "freebsd13"])
+def test_trust_hint_off_linux_lists_no_linux_store(tmp_path, platform):
+    hint = ca.trust_hint(tmp_path, platform=platform).lower()
+    assert "flatpak" not in hint
+    assert "nss" not in hint
+
+
+def test_trust_hint_on_an_unconsidered_platform_names_no_script(tmp_path):
+    """trust-ca.sh refuses an OS it does not know, so pointing at it would be a dead end."""
+    hint = ca.trust_hint(tmp_path, platform="freebsd13")
     assert "scripts/trust-ca.sh" not in hint
-    assert "flatpak" not in hint.lower()
     assert platforms.PLAYBOOK in hint
     assert platforms.ISSUE in hint
 

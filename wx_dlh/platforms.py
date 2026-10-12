@@ -8,18 +8,20 @@ and they are the whole of issue #11:
     trust     how WeChat comes to accept our CA
 
 Only Linux has been carried end to end (M0, 2026-09-11), and even there both steps are a
-documented human procedure, not code - `docs/M0-runbook.md`. Windows and macOS have a
-known-looking path in the reference implementation and nothing more: no one has run it.
-This module exists so that difference is stated out loud instead of leaking out as a row
-of dead probes. `ca.trust_targets()` used to shell out to `flatpak` and `certutil`
-whichever platform it was on, so a macOS user got three unavailable Linux stores and a
-`.sh` to run - wrong in a way that looks like a working answer.
+documented human procedure, not code - `docs/M0-runbook.md`. On Windows and macOS the two
+halves stand differently. Trust has `scripts/trust-ca.sh` (#23), which installs into the
+keychain or the certificate store and reads the store back. Routing has only the
+reference implementation's path, which no one has run. Neither has been watched working
+against a real WeChat, and this module exists so that is stated out loud instead of
+leaking out as a row of dead probes. `ca.trust_targets()` used to shell out to `flatpak`
+and `certutil` whichever platform it was on, so a macOS user got three unavailable Linux
+stores and Linux-only commands to run - wrong in a way that looks like a working answer.
 
-Nothing here sets a proxy or installs a certificate. Writing that before it can be tested
-is exactly what issue #11 argues against: on Linux `update-ca-trust` reported success at
-every step while the client kept rejecting the certificate, and only a real client on a
-real machine showed why. Until someone runs the checks in `docs/cross-platform-verification.md`, an
-adapter would be a guess wearing the costume of an answer.
+Nothing here sets a proxy or installs a certificate, and `verified` stays False until a
+real client has been driven through the proxy. A store that lists the CA is not yet a
+client that accepts it: on Linux `update-ca-trust` reported success at every step while
+the client kept rejecting the certificate, and only a real client on a real machine
+showed why. The checks that decide it are in `docs/cross-platform-verification.md`.
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ UNKNOWN = "unknown"
 
 #: Where the per-platform steps live, once they exist.
 PLAYBOOK = "docs/cross-platform-verification.md"
+#: Installs the CA on every platform here and reads the store back; see its header.
+TRUST_SCRIPT = "scripts/trust-ca.sh"
 ISSUE = "https://github.com/amyteq/at_wxclip/issues/11"
 
 
@@ -92,8 +96,9 @@ SUPPORT: dict[str, HostSupport] = {
         verified=False,
         routing="`networksetup -setsecurewebproxy` per active network service "
         "(what the reference implementation does; never run for this project)",
-        trust="`sudo security add-trusted-cert -d -r trustRoot -k "
-        "/Library/Keychains/System.keychain` (likewise unrun)",
+        trust="`scripts/trust-ca.sh`: the login keychain through `security add-trusted-cert`, "
+        "or the System keychain with `--system` (the reference implementation's choice); "
+        "read back with `security verify-cert`, never watched against a real WeChat",
         doc=PLAYBOOK,
     ),
     WINDOWS: HostSupport(
@@ -103,7 +108,9 @@ SUPPORT: dict[str, HostSupport] = {
         routing=r"WinINET registry values under "
         r"`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` "
         "(what the reference implementation does; never run for this project)",
-        trust="the user's `root` certificate store, via certmgr or an equivalent (likewise unrun)",
+        trust=r"`scripts/trust-ca.sh` from Git Bash, MSYS2, Cygwin or WSL: `CurrentUser\Root` "
+        r"through certutil.exe, or `LocalMachine\Root` with `--system`; read back from the "
+        "store, never watched against a real WeChat",
         doc=PLAYBOOK,
     ),
 }
@@ -133,29 +140,43 @@ def status_line(platform: str | None = None) -> str:
     if known.verified:
         return f"platform: {known.name} - verified end to end, steps in {known.doc}"
     return (
-        f"platform: {known.name} - NOT verified; routing and CA trust are unimplemented (issue #11)"
+        f"platform: {known.name} - NOT verified; routing is unimplemented and CA trust "
+        f"({TRUST_SCRIPT}) is untested against a real WeChat (issue #11)"
     )
 
 
 def unsupported_note(platform: str | None = None) -> str:
-    """Why this platform has no steps yet, and where the work to produce them lives.
+    """Why this platform is unverified, and where the work to verify it lives.
 
     It names the mechanism but stops short of being a procedure to paste: the ordered
     steps live in the playbook, next to the checks that decide whether they did anything.
     On Linux every one of those commands succeeded long before any of them worked, so a
-    bare command list is the one shape this advice must not take.
+    bare command list is the one shape this advice must not take. Trust is different only
+    in having a script to name: `scripts/trust-ca.sh` reads back the store it wrote to,
+    which is necessary and still not the same thing as WeChat accepting the CA.
     """
     known = support(platform)
     # An unrecognised platform has no name worth printing - `current()` has already
     # flattened it to "unknown" - so address it rather than label it.
     label = f"on {known.name}" if known else "on this platform"
+    # Off the considered platforms trust-ca.sh refuses to run, so it is not named there.
+    state = "is not verified" if known else "is not implemented"
     lines = [
-        f"Pointing WeChat at this proxy is not implemented {label}.",
+        f"Pointing WeChat at this proxy {state} {label}.",
         "",
         "  what it would take, routing: " + (known.routing if known else "unknown"),
         "  what it would take, trust:   " + (known.trust if known else "unknown"),
         "",
-        "Neither has been run against a real client, so neither is in the code yet:",
+    ]
+    if known:
+        lines += [
+            "Routing has no code here yet; trust has a script. Neither has been watched "
+            "working against a real WeChat:",
+            f"  {TRUST_SCRIPT}   installs the CA and reads the store back",
+        ]
+    else:
+        lines.append("Neither has been run against a real client, so neither is in the code yet:")
+    lines += [
         f"  {PLAYBOOK}   the checks to run, in order, with what counts as a pass",
         f"  {ISSUE}   the issue this lands under",
     ]

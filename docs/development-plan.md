@@ -153,7 +153,7 @@ SDK 是第一选择，但它**装不进同一个 venv**：`anthropic>=1` 要 htt
 - 讨论：https://github.com/amyteq/at_wxclip/discussions/2
 - M0（已完成）：https://github.com/amyteq/at_wxclip/issues/4 —— Linux 侧的结论、踩过的坑和跨平台问答都在那条 issue 里
 - M1（已完成）：https://github.com/amyteq/at_wxclip/issues/8
-- 跨平台 adapter：https://github.com/amyteq/at_wxclip/issues/11 —— 从 M1 拆出来。没有 Win/Mac 机器实测，照抄参考实现只会留下一段没人跑过的代码；M0 在 Linux 上的教训就是「装了 CA、命令全成功、客户端照样不认」，没实测的 adapter 只会给下一个人一个假的起点。**不需要机器的那一半已经做了**：`wx_dlh/platforms.py` 把「路由」与「信任」这两件平台相关的事单独圈出来，在未实测的平台上明说未实现而不是照着 Linux 探测一遍；参考实现在 Win/Mac 上的做法已逐行核对并记进 `docs/project-background.md` 的两节；要跑的检查、判定标准和结论登记表在 `docs/cross-platform-verification.md`。adapter 本身仍然等实测
+- 跨平台 adapter：https://github.com/amyteq/at_wxclip/issues/11 —— 从 M1 拆出来。没有 Win/Mac 机器实测，照抄参考实现只会留下一段没人跑过的代码；M0 在 Linux 上的教训就是「装了 CA、命令全成功、客户端照样不认」，没实测的 adapter 只会给下一个人一个假的起点。**不需要机器的那一半已经做了**：`wx_dlh/platforms.py` 把「路由」与「信任」这两件平台相关的事单独圈出来，在未实测的平台上明说没验证过而不是照着 Linux 探测一遍；参考实现在 Win/Mac 上的做法已逐行核对并记进 `docs/project-background.md` 的两节；要跑的检查、判定标准和结论登记表在 `docs/cross-platform-verification.md`。adapter 本身仍然等实测
 - M2（已完成）：https://github.com/amyteq/at_wxclip/issues/9
 - M3（代码完成，真实模型调用待验）：https://github.com/amyteq/at_wxclip/issues/10
 - PR：骨架 https://github.com/amyteq/at_wxclip/pull/3 、M0 https://github.com/amyteq/at_wxclip/pull/7

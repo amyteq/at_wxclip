@@ -152,8 +152,10 @@ def trust_hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID, platform: str | None 
     """Human-facing next steps; the walkthrough lives in `docs/M0-runbook.md`.
 
     The certificate itself is the same file on every platform, so those lines are always
-    printed. What changes is whether we can say where to put it: off Linux we cannot, and
-    say that rather than print Linux's stores with minus signs next to them.
+    printed. What changes is what we can say about where it goes. On Linux we probe the
+    stores. On macOS and Windows `scripts/trust-ca.sh` knows the stores, but nobody has
+    watched WeChat accept the CA through them, so the note says that rather than print
+    Linux's stores with minus signs next to them.
     """
     pem = cert_path(ca_dir)
     lines = [

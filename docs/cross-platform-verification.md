@@ -39,7 +39,7 @@ ffprobe <file>                               # 认得出 h264/aac 就是真的�
 
 1. **命令成功不算过。** 每一关都要有客户端侧的证据（上表右列），不要拿命令退出码交差。
 2. **改完信任库要重启 WeChat。** 证书库是启动时读的；不重启就看到的失败是假失败。
-3. **别信标记文件。** 参考实现装完证书写一个 `installed.lock`，之后只查这个文件在不在（`cert.js` 的 `checkCertInstalled`），**从不回头查证书是不是真在库里**。人手把证书删了、或者当初压根没装进去，它都认为装好了。我们要落地的话，装完必须回查一次真库。
+3. **别信标记文件。** 参考实现装完证书写一个 `installed.lock`，之后只查这个文件在不在（`cert.js` 的 `checkCertInstalled`），**从不回头查证书是不是真在库里**。人手把证书删了、或者当初压根没装进去，它都认为装好了。我们要落地的话，装完必须回查一次真库 —— `scripts/trust-ca.sh` 就是这么做的（#23）。但库里查得到只说明装上了，不说明 WeChat 认它，那是第 2 关要回答的。
 
 ## Windows
 
@@ -81,7 +81,7 @@ python -m wx_dlh ca            # 生成 CA，打印路径与指纹
 python -m wx_dlh proxy         # 另开一个终端，让它一直跑
 ```
 
-然后按上面「四道关」逐关推进：设注册表 → 看第 1 关 → 装证书 + 重启 WeChat → 看第 2 关 → 播一个视频号视频 → 看第 3、4 关。每一关的结论填进本文末尾的登记表。
+然后按上面「四道关」逐关推进：设注册表 → 看第 1 关 → 装证书（`scripts/trust-ca.sh`，在 Git Bash / MSYS2 / Cygwin 或 WSL 里跑，默认进 `CurrentUser\Root`）+ 重启 WeChat → 看第 2 关 → 播一个视频号视频 → 看第 3、4 关。每一关的结论填进本文末尾的登记表。
 
 ## macOS
 
@@ -131,15 +131,15 @@ python -m wx_dlh ca
 python -m wx_dlh proxy
 ```
 
-同样按四道关推进：`networksetup -setsecurewebproxy` → 第 1 关 → `security add-trusted-cert` + 重启 WeChat → 第 2 关 → 播视频 → 第 3、4 关。
+同样按四道关推进：`networksetup -setsecurewebproxy` → 第 1 关 → `scripts/trust-ca.sh`（默认登录钥匙串；`--system` 是参考实现用的系统钥匙串）+ 重启 WeChat → 第 2 关 → 播视频 → 第 3、4 关。
 
 ## 验完之后往代码里落什么
 
 顺序是**先改事实，再写代码**：
 
 1. **`docs/project-background.md`** —— 把结论写进对应平台那一节（已经开好位置，和 Linux 那节并列）。这是最重要的一步：协议与客户端行为的结论是这个项目最贵的资产，代码是它的附属品。
-2. **`wx_dlh/platforms.py`** —— 把该平台的 `HostSupport` 改成 `verified=True`，`routing` / `trust` 换成**实测到的**做法（现在写的是参考实现的做法，措辞明确标着「never run for this project」）。
-3. **adapter 本身** —— 到这一步才写，而且照着实测出来的路径写，不是照着参考实现写。三条约束：
+2. **`wx_dlh/platforms.py`** —— 把该平台的 `HostSupport` 改成 `verified=True`，`routing` / `trust` 换成**实测到的**做法（现在 `routing` 写的是参考实现的做法，措辞明确标着「never run for this project」；`trust` 指向 `scripts/trust-ca.sh`，标着「never watched against a real WeChat」）。
+3. **adapter 本身** —— 到这一步才写，而且照着实测出来的路径写，不是照着参考实现写。信任那一半已经是 `scripts/trust-ca.sh`，实测不对就改它，不另起一份；还没有的是路由。三条约束：
    - **可撤销**：设了代理就要有 `--unset`，而且要把值真的清干净（参考实现留着 `ProxyServer` 只清 `ProxyEnable`，算半个撤销）。
    - **装完回查**：不要学 `installed.lock`。装完去真库里查一次，查不到就报错。
    - **不静默**：每一步打印它实际执行的命令和结果，因为下一个在别的版本上踩坑的人只有这些输出可看。

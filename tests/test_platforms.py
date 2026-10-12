@@ -84,6 +84,20 @@ def test_status_line_marks_the_unverified_platforms_and_names_the_issue():
     assert "NOT verified" not in platforms.status_line("linux")
 
 
+@pytest.mark.parametrize("raw", ["darwin", "win32"])
+def test_trust_points_at_the_script_routing_still_has_none(raw):
+    """#23 gave trust-ca.sh the macOS keychain and the Windows certificate store; nothing
+    has done the same for routing. Neither changes `verified`."""
+    known = platforms.support(raw)
+    assert platforms.TRUST_SCRIPT in known.trust
+    assert platforms.TRUST_SCRIPT not in known.routing
+    assert "never run for this project" in known.routing
+    assert known.verified is False
+    line = platforms.status_line(raw)
+    assert "routing is unimplemented" in line
+    assert platforms.TRUST_SCRIPT in line
+
+
 def test_status_line_for_an_unconsidered_platform_does_not_invent_a_name():
     line = platforms.status_line("freebsd13")
     assert "not considered" in line
@@ -94,7 +108,8 @@ def test_status_line_for_an_unconsidered_platform_does_not_invent_a_name():
 @pytest.mark.parametrize(("raw", "name"), [("darwin", "macOS"), ("win32", "Windows")])
 def test_unsupported_note_says_what_it_would_take_and_where_the_work_is(raw, name):
     note = platforms.unsupported_note(raw)
-    assert f"not implemented on {name}" in note
+    assert f"not verified on {name}" in note
+    assert platforms.TRUST_SCRIPT in note
     assert platforms.PLAYBOOK in note
     assert platforms.ISSUE in note
     assert "routing" in note and "trust" in note
@@ -104,3 +119,4 @@ def test_unsupported_note_reads_as_a_sentence_for_an_unconsidered_platform():
     note = platforms.unsupported_note("freebsd13")
     assert "not implemented on this platform" in note
     assert "Nothing is known about" in note
+    assert platforms.TRUST_SCRIPT not in note
