@@ -6,6 +6,8 @@ The one thing these tests cannot check is whether the Windows and macOS descript
 stays False. See `docs/cross-platform-verification.md` and issue #11.
 """
 
+import sys
+
 import pytest
 
 from wx_dlh import platforms, trust
@@ -138,11 +140,22 @@ def test_trust_points_at_the_command_routing_still_has_none(raw):
     assert platforms.TRUST_COMMAND in line
 
 
-def test_status_line_for_an_unconsidered_platform_does_not_invent_a_name():
+@pytest.fixture
+def host_is_linux(monkeypatch):
+    """Pin `sys.platform`, so "the host's own name is absent" asserts the same thing
+    wherever the suite runs: the messages below are about a platform that is not this one."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
+def test_status_line_for_an_unconsidered_platform_names_the_one_it_was_asked_about(host_is_linux):
     line = platforms.status_line("freebsd13")
+    assert "platform: freebsd13" in line
     assert "not considered" in line
     # "unknown" is this module's internal bucket, not something to show a user.
     assert "platform: unknown" not in line
+    # Nor is the host: the caller asked about somewhere else, and answering for this
+    # machine would be a wrong answer that reads like a working one.
+    assert "linux" not in line
 
 
 @pytest.mark.parametrize(("raw", "name"), [("darwin", "macOS"), ("win32", "Windows")])
@@ -156,9 +169,25 @@ def test_unsupported_note_says_what_it_would_take_and_where_the_work_is(raw, nam
     assert "routing" in note and "trust" in note
 
 
-def test_unsupported_note_reads_as_a_sentence_for_an_unconsidered_platform():
+def test_unsupported_note_reads_as_a_sentence_for_an_unconsidered_platform(host_is_linux):
     note = platforms.unsupported_note("freebsd13")
     assert "not implemented on this platform" in note
-    assert "Nothing is known about" in note
+    assert "Nothing is known about 'freebsd13'" in note
+    assert "linux" not in note  # the platform asked about, never the one underfoot
     assert platforms.TRUST_COMMAND not in note
     assert platforms.TRUST_SCRIPT not in note
+
+
+def test_with_no_argument_an_unconsidered_host_is_named_by_sys_platform(monkeypatch):
+    """The other half of naming the platform asked about: nobody named one, so the question
+    was about this machine, and once `detect_os` has refused it `sys.platform` is the only
+    name it has left."""
+
+    def unsupported(*a, **k):
+        raise trust.TrustError("unsupported platform: freebsd13")
+
+    monkeypatch.setattr(sys, "platform", "freebsd13")
+    monkeypatch.setattr(trust, "detect_os", unsupported)
+    assert platforms.current() == platforms.UNKNOWN
+    assert "platform: freebsd13" in platforms.status_line()
+    assert "Nothing is known about 'freebsd13'" in platforms.unsupported_note()

@@ -162,12 +162,30 @@ def _asked_from_wsl(raw: str | None, platform: str) -> bool:
     return raw is None and platform == WINDOWS and trust.is_wsl()
 
 
+def _raw_name(raw: str | None) -> str:
+    """What to call a platform that has no `HostSupport` entry.
+
+    `current()` flattens everything it does not recognise to "unknown", which is this
+    module's bucket and not a name to show anyone. The name worth printing is the one the
+    caller asked about: the argument they passed, or - nobody having passed one, so the
+    question was about this machine - `sys.platform`.
+    """
+    return sys.platform if raw is None else raw
+
+
 def status_line(platform: str | None = None) -> str:
-    """One line for the top of `wx-dlh proxy --dry-run` and friends."""
+    """One line: which platform this is, and whether WeChat has been watched working on it.
+
+    `wx-dlh ca` prints it first, above the trust stores `wx_dlh.trust` picked for the same
+    machine. `wx-dlh proxy` and `wx-dlh capture` print it on stderr before they listen, and
+    only when the platform is unverified. Not on `--dry-run`: that output is parsed, so
+    both dry-run branches return before anything from here reaches the stream.
+    """
     name = current(platform)
     known = support(name)
     if known is None:
-        return f"platform: {sys.platform} - not considered; issue #11 covers Windows and macOS"
+        asked = _raw_name(platform)
+        return f"platform: {asked} - not considered; issue #11 covers Windows and macOS"
     # From inside WSL a bare "Windows" reads as a misdetection, so say which machine is
     # meant: the host, because that is where WeChat and its certificate store are.
     label = known.name + (" host (from WSL)" if _asked_from_wsl(platform, name) else "")
@@ -190,8 +208,9 @@ def unsupported_note(platform: str | None = None) -> str:
     which is necessary and still not the same thing as WeChat accepting the CA.
     """
     known = support(platform)
-    # An unrecognised platform has no name worth printing - `current()` has already
-    # flattened it to "unknown" - so address it rather than label it.
+    # An unrecognised platform has no name to carry a sentence - `current()` has already
+    # flattened it to "unknown" - so address it rather than label it; the closing line
+    # below quotes the raw name, which is all anyone here knows it by.
     label = f"on {known.name}" if known else "on this platform"
     # Off the considered platforms `wx-dlh ca --install` and trust-ca.sh both refuse to
     # run, so neither is named there.
@@ -218,5 +237,6 @@ def unsupported_note(platform: str | None = None) -> str:
     ]
     if known is None:
         lines.append("")
-        lines.append(f"Nothing is known about {sys.platform!r} at all - start from the playbook.")
+        asked = _raw_name(platform)
+        lines.append(f"Nothing is known about {asked!r} at all - start from the playbook.")
     return "\n".join(lines)
