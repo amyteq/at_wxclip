@@ -9,13 +9,14 @@ and they are the whole of issue #11:
 
 Only Linux has been carried end to end (M0, 2026-09-11), and even there both steps are a
 documented human procedure, not code - `docs/M0-runbook.md`. On Windows and macOS the two
-halves stand differently. Trust has `scripts/trust-ca.sh` (#23), which installs into the
-keychain or the certificate store and reads the store back. Routing has only the
-reference implementation's path, which no one has run. Neither has been watched working
-against a real WeChat, and this module exists so that is stated out loud instead of
-leaking out as a row of dead probes. `ca.trust_targets()` used to shell out to `flatpak`
-and `certutil` whichever platform it was on, so a macOS user got three unavailable Linux
+halves stand differently. Trust has `wx-dlh ca --install` (#28, with `scripts/trust-ca.sh`
+from #23 for a host without wx-dlh), which installs into the keychain or the certificate
+store and reads the store back. Routing has only the reference implementation's path,
+which no one has run. Neither has been watched working against a real WeChat, and this
+module exists so that is stated out loud. `wx-dlh ca` once probed `flatpak` and
+`certutil` whichever platform it was on, so a macOS user got three unavailable Linux
 stores and Linux-only commands to run - wrong in a way that looks like a working answer.
+`wx_dlh.trust` now picks the stores by OS; what it cannot say is whether WeChat reads them.
 
 Nothing here sets a proxy or installs a certificate, and `verified` stays False until a
 real client has been driven through the proxy. A store that lists the CA is not yet a
@@ -36,7 +37,9 @@ UNKNOWN = "unknown"
 
 #: Where the per-platform steps live, once they exist.
 PLAYBOOK = "docs/cross-platform-verification.md"
-#: Installs the CA on every platform here and reads the store back; see its header.
+#: Installs the CA on every platform here and reads the store back; see `wx_dlh.trust`.
+TRUST_COMMAND = "wx-dlh ca --install"
+#: The same, for a machine without wx-dlh on it - the Docker host, say.
 TRUST_SCRIPT = "scripts/trust-ca.sh"
 ISSUE = "https://github.com/amyteq/at_wxclip/issues/11"
 
@@ -85,7 +88,7 @@ SUPPORT: dict[str, HostSupport] = {
         # never reaches the webview. See docs/project-background.md.
         routing="in-app proxy settings (main process) + "
         "`flatpak override --env=http_proxy=…` (WeChatAppEx webview)",
-        trust="scripts/trust-ca.sh into the sandbox NSS db (main process); the webview "
+        trust="`wx-dlh ca --install` into the sandbox NSS db (main process); the webview "
         "ignores every trust store, so it takes "
         "`--ignore-certificate-errors-spki-list` injected by LD_PRELOAD",
         doc="docs/M0-runbook.md",
@@ -96,9 +99,10 @@ SUPPORT: dict[str, HostSupport] = {
         verified=False,
         routing="`networksetup -setsecurewebproxy` per active network service "
         "(what the reference implementation does; never run for this project)",
-        trust="`scripts/trust-ca.sh`: the login keychain through `security add-trusted-cert`, "
-        "or the System keychain with `--system` (the reference implementation's choice); "
-        "read back with `security verify-cert`, never watched against a real WeChat",
+        trust="`wx-dlh ca --install` (or `scripts/trust-ca.sh`): the login keychain through "
+        "`security add-trusted-cert`, or the System keychain with `--system` (the reference "
+        "implementation's choice); read back with `security verify-cert`, never watched "
+        "against a real WeChat",
         doc=PLAYBOOK,
     ),
     WINDOWS: HostSupport(
@@ -108,9 +112,10 @@ SUPPORT: dict[str, HostSupport] = {
         routing=r"WinINET registry values under "
         r"`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` "
         "(what the reference implementation does; never run for this project)",
-        trust=r"`scripts/trust-ca.sh` from Git Bash, MSYS2, Cygwin or WSL: `CurrentUser\Root` "
-        r"through certutil.exe, or `LocalMachine\Root` with `--system`; read back from the "
-        "store, never watched against a real WeChat",
+        trust=r"`wx-dlh ca --install` natively or from WSL, or `scripts/trust-ca.sh` from Git "
+        r"Bash, MSYS2, Cygwin or WSL: `CurrentUser\Root` through certutil.exe, or "
+        r"`LocalMachine\Root` with `--system`; read back from the store, never watched "
+        "against a real WeChat",
         doc=PLAYBOOK,
     ),
 }
@@ -141,7 +146,7 @@ def status_line(platform: str | None = None) -> str:
         return f"platform: {known.name} - verified end to end, steps in {known.doc}"
     return (
         f"platform: {known.name} - NOT verified; routing is unimplemented and CA trust "
-        f"({TRUST_SCRIPT}) is untested against a real WeChat (issue #11)"
+        f"({TRUST_COMMAND}) is untested against a real WeChat (issue #11)"
     )
 
 
@@ -152,14 +157,15 @@ def unsupported_note(platform: str | None = None) -> str:
     steps live in the playbook, next to the checks that decide whether they did anything.
     On Linux every one of those commands succeeded long before any of them worked, so a
     bare command list is the one shape this advice must not take. Trust is different only
-    in having a script to name: `scripts/trust-ca.sh` reads back the store it wrote to,
+    in having a command to name: `wx-dlh ca --install` reads back the store it wrote to,
     which is necessary and still not the same thing as WeChat accepting the CA.
     """
     known = support(platform)
     # An unrecognised platform has no name worth printing - `current()` has already
     # flattened it to "unknown" - so address it rather than label it.
     label = f"on {known.name}" if known else "on this platform"
-    # Off the considered platforms trust-ca.sh refuses to run, so it is not named there.
+    # Off the considered platforms `wx-dlh ca --install` and trust-ca.sh both refuse to
+    # run, so neither is named there.
     state = "is not verified" if known else "is not implemented"
     lines = [
         f"Pointing WeChat at this proxy {state} {label}.",
@@ -170,9 +176,10 @@ def unsupported_note(platform: str | None = None) -> str:
     ]
     if known:
         lines += [
-            "Routing has no code here yet; trust has a script. Neither has been watched "
+            "Routing has no code here yet; trust has a command. Neither has been watched "
             "working against a real WeChat:",
-            f"  {TRUST_SCRIPT}   installs the CA and reads the store back",
+            f"  {TRUST_COMMAND}   installs the CA and reads the store back "
+            f"({TRUST_SCRIPT} without wx-dlh)",
         ]
     else:
         lines.append("Neither has been run against a real client, so neither is in the code yet:")

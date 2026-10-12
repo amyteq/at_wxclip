@@ -22,7 +22,7 @@ M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视�
   flatpak override --user com.tencent.WeChat --persist=.pki
   ```
 
-  这一步现在由 `scripts/trust-ca.sh` 自动做掉，并且会真的进沙箱确认一次（`flatpak run --command=sh … -c '[ -f $HOME/.pki/nssdb/cert9.db ]'`）。这个坑很安静：证书装了、命令全成功、应用照样拒绝，表现就是 webview 弹 **「您的连接不是私密连接」**，代理日志里是 `tls alert certificate unknown`。
+  这一步现在由 `wx-dlh ca --install`（或 `scripts/trust-ca.sh`）自动做掉，并且会真的进沙箱确认一次（`flatpak run --command=sh … -c '[ -f $HOME/.pki/nssdb/cert9.db ]'`）。这个坑很安静：证书装了、命令全成功、应用照样拒绝，表现就是 webview 弹 **「您的连接不是私密连接」**，代理日志里是 `tls alert certificate unknown`。
 
 ## 第一轮实测结果（2026-09-11 11:25–11:31 本机时间）
 
@@ -38,18 +38,18 @@ M0 要回答两个问题：**Linux 版 WeChat 能不能被 MITM**，以及**视�
 ## 1. 准备 CA（已做，可重复执行）
 
 ```bash
-.venv/bin/python -m wx_dlh ca          # 生成 CA 并打印证书路径、指纹、可用的信任位置
-scripts/trust-ca.sh                    # 装进自动探测到的 NSS 库（Flatpak 沙箱优先）
-scripts/trust-ca.sh --list             # 看装在哪了
-scripts/trust-ca.sh --remove           # 撤销
+.venv/bin/python -m wx_dlh ca            # 生成 CA 并打印证书路径、指纹、可用的信任位置
+.venv/bin/python -m wx_dlh ca --install  # 装进自动探测到的 NSS 库（Flatpak 沙箱优先）
+.venv/bin/python -m wx_dlh ca --list     # 看装在哪了
+.venv/bin/python -m wx_dlh ca --remove   # 撤销
 ```
 
-CA 默认在 `~/.config/wx-dlh/ca/`（**不在仓库里**，因为带私钥）。`WX_DLH_CA_DIR` 可以改。装完要**重启 WeChat**，证书库是启动时读的。
+CA 默认在 `~/.config/wx-dlh/ca/`（**不在仓库里**，因为带私钥）。没装 wx-dlh 的机器上，`scripts/trust-ca.sh` 接受同样的参数（那台机器要有 openssl，脚本靠它读证书和算指纹）。`WX_DLH_CA_DIR` 可以改。装完要**重启 WeChat**，证书库是启动时读的。
 
 如果之后发现 WeChat 仍然不认这张证书，按这个顺序试：
 
 ```bash
-scripts/trust-ca.sh --system           # 宿主机系统信任库（sudo；Flatpak 看不到，但 /opt/wechat 那个包要）
+.venv/bin/python -m wx_dlh ca --install --system   # 宿主机系统信任库（sudo；Flatpak 看不到，但 /opt/wechat 那个包要）
 # 让沙箱里的 OpenSSL 类调用也认（Chromium 的 NSS 不吃这招，但值得一并排除）
 flatpak override --user com.tencent.WeChat \
   --filesystem="$HOME/.config/wx-dlh:ro" \

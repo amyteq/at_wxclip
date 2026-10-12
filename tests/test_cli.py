@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from wx_dlh import __version__, platforms
+from wx_dlh import __version__, platforms, trust
 from wx_dlh.__main__ import PLANNED, _warn_unverified_platform, build_parser, main
 from wx_dlh.keystream import HEAD_BYTES, keystream
 
@@ -55,12 +55,75 @@ def test_a_verified_platform_says_nothing(monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+@pytest.fixture
+def host(monkeypatch):
+    """Make `wx-dlh ca` believe it runs on `raw` - both halves of it: `platforms` for what
+    has been verified, `trust` for which stores this machine has."""
+
+    def pretend(raw: str, os_name: str | None) -> None:
+        real_current = platforms.current
+        monkeypatch.setattr(platforms, "current", lambda r=None: real_current(r or raw))
+
+        def detect_os(*a, **k):
+            if os_name is None:
+                raise trust.TrustError(f"unsupported platform: {raw}")
+            return os_name
+
+        monkeypatch.setattr(trust, "detect_os", detect_os)
+
+    return pretend
+
+
+@pytest.mark.parametrize(("raw", "os_name"), [("darwin", "macos"), ("win32", "windows")])
+def test_ca_on_macos_and_windows_lists_the_stores_and_says_they_are_unverified(
+    tmp_path, capsys, host, raw, os_name
+):
+    """Since #28 `wx-dlh ca` lists the real keychain or certificate store there, which reads
+    like the whole answer. No real WeChat has accepted the CA through either yet, so the
+    output says that in the same breath, next to the checks that would show it."""
+    pytest.importorskip("mitmproxy")
+    host(raw, os_name)
+    assert main(["ca", "--ca-dir", str(tmp_path / "ca")]) == 0
+    out = capsys.readouterr().out
+    assert "mitmproxy-ca-cert.pem" in out
+    assert f"Trust stores on this machine ({os_name})" in out
+    assert "wx-dlh ca --install" in out
+    assert "NOT verified" in out
+    assert "never watched against a real WeChat" in out
+    assert platforms.PLAYBOOK in out
+    assert platforms.ISSUE in out
+    assert "flatpak" not in out.lower()
+
+
+def test_ca_on_an_unconsidered_platform_names_no_command(tmp_path, capsys, host):
+    """`wx-dlh ca --install` and trust-ca.sh both refuse an OS they do not know, so
+    pointing at either would be a dead end; the certificate and the playbook remain."""
+    pytest.importorskip("mitmproxy")
+    host("freebsd13", None)
+    assert main(["ca", "--ca-dir", str(tmp_path / "ca")]) == 0
+    out = capsys.readouterr().out
+    assert "mitmproxy-ca-cert.pem" in out
+    assert "ca --install" not in out
+    assert platforms.TRUST_SCRIPT not in out
+    assert platforms.PLAYBOOK in out
+    assert platforms.ISSUE in out
+
+
+def test_ca_on_linux_adds_no_unverified_note(tmp_path, capsys, host):
+    pytest.importorskip("mitmproxy")
+    host("linux", "linux")
+    assert main(["ca", "--ca-dir", str(tmp_path / "ca")]) == 0
+    out = capsys.readouterr().out
+    assert "verified end to end" in out
+    assert platforms.PLAYBOOK not in out
+
+
 def test_ca_creates_the_ca_and_explains_the_trust_stores(tmp_path, capsys):
     pytest.importorskip("mitmproxy")
     assert main(["ca", "--ca-dir", str(tmp_path / "ca"), "--app-id", "com.example.App"]) == 0
     out = capsys.readouterr().out
     assert "mitmproxy-ca-cert.pem" in out
-    assert "com.example.App" in out
+    assert "wx-dlh ca --install" in out
     assert (tmp_path / "ca" / "mitmproxy-ca-cert.pem").is_file()
 
 

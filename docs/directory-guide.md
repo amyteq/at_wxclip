@@ -4,7 +4,7 @@
 
 | 路径       | 职责                                                                 |
 |------------|----------------------------------------------------------------------|
-| `wx_dlh/`  | Python 包，可 `python -m wx_dlh` 运行；模块按职责拆：proxy / capture / keystream / decrypt / downloader / pipeline / server，后处理是 media / frames / extract / summarize / postprocess |
+| `wx_dlh/`  | Python 包，可 `python -m wx_dlh` 运行；模块按职责拆：proxy / capture / keystream / decrypt / downloader / pipeline / server，CA 与信任库是 ca / trust，后处理是 media / frames / extract / summarize / postprocess |
 | `web/`     | 注入页面的 hook 脚本、前端页面；构建产物不进 Git（keystream 自 M1 起在 Python 侧） |
 | `docs/`    | 背景、计划、规格、协议发现记录                                         |
 | `tests/`   | pytest 测试，文件名对应被测模块（`test_<module>.py`）                  |

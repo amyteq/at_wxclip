@@ -1,31 +1,25 @@
-"""The proxy's own CA: create it, find it, say how to make WeChat trust it.
+"""The proxy's own CA: create it, find it, fingerprint it.
 
 mitmproxy owns the CA material, and we keep its file names (`mitmproxy-ca*`) so it picks
 the same files up from `confdir` on the next run - only the directory is ours. The private
-key never belongs in the repo: the default location is outside it.
-
-Creating the CA is portable - mitmproxy does that anywhere. *Trusting* it is not: the
-stores below are the ones a Linux WeChat reads, and probing for `flatpak` or `certutil`
-on another platform answers a question nobody asked. Everything past `ensure_ca` is
-therefore behind `platforms`, and on Windows and macOS says so instead of guessing.
+key never belongs in the repo: the default location is outside it. Putting the certificate
+into the trust stores WeChat reads is `wx_dlh.trust`.
 """
 
 from __future__ import annotations
 
 import contextlib
-import shutil
-import subprocess
-from dataclasses import dataclass
+import hashlib
+import re
+import ssl
 from pathlib import Path
-
-from wx_dlh import platforms
 
 #: mitmproxy's naming inside `confdir`. Do not rename: mitmproxy looks for these.
 CA_BASENAME = "mitmproxy"
 KEY_SIZE = 2048
 
 #: The Flatpak build of WeChat has no access to the host home, so its Chromium runtime
-#: reads a NSS database inside the sandbox home instead of `~/.pki/nssdb`.
+#: reads a NSS database inside the sandbox home instead of `~/.pki/nssdb` (see `trust`).
 FLATPAK_APP_ID = "com.tencent.WeChat"
 
 
@@ -85,99 +79,144 @@ def ensure_ca(ca_dir: Path) -> Path:
     return cert_path(ca_dir)
 
 
-def fingerprint(pem: Path) -> str:
-    """SHA-256 fingerprint, so the certificate in the trust store can be identified."""
-    if not shutil.which("openssl"):
-        return ""
-    result = subprocess.run(
-        ["openssl", "x509", "-in", str(pem), "-noout", "-fingerprint", "-sha256"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return ""
-    return result.stdout.strip().partition("=")[2]
+#: A `BEGIN ... PRIVATE KEY` line of any flavour: PKCS#8, RSA, EC, ENCRYPTED.
+PRIVATE_KEY_PEM = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 
 
-@dataclass(frozen=True)
-class TrustTarget:
-    """One place the certificate has to be installed, and whether it is reachable."""
+#: Why the bytes have to be the ones openssl writes back, and not merely bytes openssl can
+#: read: `digest` hashes what is between the delimiters, while openssl fingerprints its own
+#: re-encoding of it. DER allows each value one spelling; openssl reads the others anyway
+#: and rewrites them on the way out, and then the two print two fingerprints for one
+#: certificate - and a store searched by ours would not find what `openssl x509
+#: -fingerprint` says is in it. Where that line falls is openssl's business and not a rule
+#: of ours: it hands `tbsCertificate` back exactly as it read it (the signature is over
+#: those very bytes, padded lengths and all) and re-encodes everything around it, it refuses
+#: some spellings outright, and which is which has moved between its versions. So nothing
+#: here is read off a rule - openssl re-encodes the file and the result is compared byte for
+#: byte, which is the comparison `scripts/trust-ca.sh` makes with the CLI.
+NOT_DER = (
+    "what is between the PEM delimiters is not the certificate alone as openssl writes it "
+    "back: either something rides behind it - a second certificate, a key, padding - or a "
+    "tag or a length is spelled a way DER does not allow and openssl rewrites before it "
+    "fingerprints - the fingerprints would differ. Pass the certificate by itself, "
+    "re-encoded if need be with: openssl x509 -in FILE -out FILE"
+)
 
-    name: str
-    detail: str
-    available: bool
+#: `--install` files what it is given as a trust anchor, so what may not sign certificates
+#: has no business there. The question is openssl's own X509_check_ca - basicConstraints
+#: CA:TRUE, or one of the older shapes openssl still counts as a CA, and a keyUsage that
+#: permits signing certificates where there is one - and both halves of the port ask it:
+#: `get_ca_certs` hands back only what it accepts, and `openssl x509 -noout -purpose` prints
+#: it as the OCSP helper CA line, which is what `scripts/trust-ca.sh` reads.
+NOT_A_CA = (
+    "openssl reads a certificate between the PEM delimiters, but not a CA certificate "
+    "(openssl x509 -in FILE -noout -purpose prints: OCSP helper CA : No); a trust store "
+    f"takes certification authorities, so pass the {CA_BASENAME}-ca-cert.pem a CA directory "
+    "holds"
+)
 
 
-def flatpak_nssdb(app_id: str = FLATPAK_APP_ID) -> Path:
-    return Path.home() / ".var" / "app" / app_id / ".pki" / "nssdb"
+def _parse_x509(der: bytes) -> None:
+    """Raise ValueError unless `der` is one X.509 CA certificate, by itself, and already
+    written the way openssl writes one back.
 
+    Both the reading and the verdict are OpenSSL's own, reached through `ssl`:
+    `load_verify_locations` hands the bytes to it without a file or a socket, and
+    `get_ca_certs(binary_form=True)` hands back what it made of them - the certificate
+    re-encoded, which is the `openssl x509 -outform DER` the script compares against and the
+    bytes openssl fingerprints. One certificate back, equal to the one handed in, is the
+    whole test, and it is the script's test: anything riding behind the certificate is
+    missing from the re-encoding - a second certificate included, since openssl stops at the
+    end of the first, which is why a bundle fails this comparison in both halves - and a tag
+    or length openssl rewrites comes back rewritten. Nothing here walks DER itself, so there
+    is no list of spellings of our own to drift from openssl's - checked against OpenSSL
+    3.0.13 and 3.6.4, which do not accept quite the same files as each other, and under both
+    the two halves of the port still accept the same ones. The context is thrown away.
 
-def trust_targets(app_id: str = FLATPAK_APP_ID, platform: str | None = None) -> list[TrustTarget]:
-    """Which trust stores this machine actually has. Detection only - installing is
-    `scripts/trust-ca.sh`, because the system store needs sudo.
+    The bytes go in wrapped back into a PEM block rather than as bare DER, and the block is
+    built here from `der` so that openssl still sees those bytes and nothing else of the
+    text they came out of. `cadata` of `bytes` is read as a stream of DER values, and
+    CPython 3.11.0 through 3.11.15 took only ASN1_R_HEADER_TOO_LONG for the end of it
+    (3.11.16 and 3.12 end it on BIO_eof); OpenSSL's CVE-2026-34180 hardening (3.0.21,
+    3.4.6, 3.5.7, 3.6.3, 4.0.1) ends it with ASN1_R_NOT_ENOUGH_DATA instead, so on those
+    pairings every valid certificate came back as no certificate at all and
+    `ca --install/--list/--remove` refused the CA it was pointed at (python/cpython#151504).
+    This project supports 3.11, and its own interpreter is a 3.11.15 one: not such a pairing
+    today, one OpenSSL update from being one. `cadata` of `str` is read as PEM, which ends
+    on PEM's own PEM_R_NO_START_LINE - the hardening rewrote the DER reader, not that one -
+    and what comes back out of `get_ca_certs` is the same either way.
 
-    Empty off Linux: these three stores are what a *Linux* WeChat reads, and reporting
-    them as merely unavailable elsewhere would read as "install these and you are done".
+    What `get_ca_certs` leaves out is what X509_check_ca rejects, so a certificate that is
+    no CA comes back as nothing at all - the rule the script spells with `-purpose`.
+
+    Going through the standard library rather than `cryptography` keeps mitmproxy the only
+    runtime dependency (AGENTS.md) - that `cryptography` comes in under mitmproxy today is
+    its choice to revisit, not ours to depend on.
     """
-    if platforms.current(platform) != platforms.LINUX:
-        return []
-    flatpak = shutil.which("flatpak")
-    installed = False
-    if flatpak:
-        result = subprocess.run(
-            [flatpak, "info", app_id], capture_output=True, text=True, check=False
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    try:
+        ctx.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(der))
+    except (ssl.SSLError, ValueError) as exc:  # SSLError is an OSError: it must not escape
+        raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
+    read = ctx.get_ca_certs(binary_form=True)
+    if not read:
+        raise ValueError(NOT_A_CA)
+    if read[0] != der:  # one block in, so one certificate out, and it has to be this one
+        raise ValueError(NOT_DER)
+
+
+def cert_der(pem_text: str) -> bytes:
+    """The DER bytes of one PEM certificate; ValueError when the text is not that.
+
+    A text that carries the private key as well is refused rather than filtered down to
+    its certificate: `key_path`'s combined file is exactly such a text, and a trust store
+    handed it would keep the CA's private key in a file of its own - on Linux a
+    world-readable trust anchor. Refusing is the only safe reading of that mistake.
+
+    What the delimiters hold is parsed, not merely base64-decoded: a `BEGIN CERTIFICATE`
+    block can wrap any bytes at all, and `trust` files what it is given as a trust anchor.
+    One CA certificate, by itself, spelled as openssl spells it - `_parse_x509` says why
+    each of those three is asked for.
+    """
+    if PRIVATE_KEY_PEM.search(pem_text):
+        raise ValueError(
+            "this holds the CA private key as well as the certificate; "
+            f"pass the certificate-only {CA_BASENAME}-ca-cert.pem"
         )
-        installed = result.returncode == 0
-    return [
-        TrustTarget(
-            "flatpak-nss",
-            f"NSS db in the {app_id} sandbox: {flatpak_nssdb(app_id)}",
-            installed and bool(shutil.which("certutil")),
-        ),
-        TrustTarget(
-            "user-nss",
-            f"user NSS db (non-Flatpak Chromium builds): {Path.home() / '.pki' / 'nssdb'}",
-            bool(shutil.which("certutil")),
-        ),
-        TrustTarget(
-            "system",
-            "system trust anchors: /etc/ca-certificates/trust-source/anchors (needs sudo)",
-            bool(shutil.which("update-ca-trust")),
-        ),
-    ]
+    der = ssl.PEM_cert_to_DER_cert(pem_text.strip())
+    _parse_x509(der)
+    return der
 
 
-def trust_hint(ca_dir: Path, app_id: str = FLATPAK_APP_ID, platform: str | None = None) -> str:
-    """Human-facing next steps; the walkthrough lives in `docs/M0-runbook.md`.
+def load_cert(pem: Path) -> bytes:
+    """`cert_der` of a file: OSError when it cannot be read, ValueError when what is in
+    it is not one certificate - bytes that are not even text among them (a DER `.cer`,
+    say), which `read_text` would raise a `UnicodeDecodeError` over."""
+    raw = Path(pem).read_bytes()
+    try:
+        text = raw.decode()
+    except UnicodeDecodeError:
+        raise ValueError(
+            f"this is not PEM text; pass the {CA_BASENAME}-ca-cert.pem a CA directory holds"
+        ) from None
+    return cert_der(text)
 
-    The certificate itself is the same file on every platform, so those lines are always
-    printed. What changes is what we can say about where it goes. On Linux we probe the
-    stores. On macOS and Windows `scripts/trust-ca.sh` knows the stores, but nobody has
-    watched WeChat accept the CA through them, so the note says that rather than print
-    Linux's stores with minus signs next to them.
+
+def digest(der: bytes, algorithm: str = "sha256", *, sep: str = ":") -> str:
+    """A certificate's fingerprint in upper-case hex.
+
+    SHA-256 with colons is how `openssl x509 -fingerprint` prints it; SHA-1 without them is
+    how keychains and certutil.exe look a certificate up. Computed here rather than by
+    openssl, which a Windows machine does not have.
     """
-    pem = cert_path(ca_dir)
-    lines = [
-        f"CA certificate: {pem}",
-        f"CA private key: {key_path(ca_dir)}  (keep it here, never commit it)",
-    ]
-    fp = fingerprint(pem)
-    if fp:
-        lines.append(f"SHA-256:        {fp}")
-    lines.append("")
+    hexed = hashlib.new(algorithm, der, usedforsecurity=False).hexdigest().upper()
+    return sep.join(hexed[i : i + 2] for i in range(0, len(hexed), 2))
 
-    host = platforms.current(platform)
-    if host != platforms.LINUX:
-        lines.append(platforms.unsupported_note(host))
-        return "\n".join(lines)
 
-    lines.append("Trust it where WeChat will look:")
-    for target in trust_targets(app_id, platform=platform):
-        mark = "+" if target.available else "-"
-        lines.append(f"  [{mark}] {target.name}: {target.detail}")
-    lines.append("")
-    lines.append(f"  scripts/trust-ca.sh --cert {pem}          # detected stores")
-    lines.append("  scripts/trust-ca.sh --system              # adds the system store (sudo)")
-    lines.append("  scripts/trust-ca.sh --remove              # undo")
-    return "\n".join(lines)
+def fingerprint(pem: Path, algorithm: str = "sha256", *, sep: str = ":") -> str:
+    """`digest` of a certificate file, or "" when there is no certificate to read there."""
+    try:
+        der = load_cert(pem)
+    except (OSError, ValueError):
+        return ""
+    return digest(der, algorithm, sep=sep)

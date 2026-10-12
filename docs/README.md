@@ -8,7 +8,7 @@
 | `M0-runbook.md` | M0 spike 的实操步骤：CA 信任、代理设置、看什么日志、怎么判定 |
 | `cross-platform-verification.md` | Windows / macOS 上线前要验的四道关、判定标准与结论登记表（issue #11） |
 | `docker.md` | 用 Docker 跑代理、面板和 capture：能省什么、省不掉什么，各系统的宿主机步骤，配置与验证范围 |
-| `pypi-publishing.md` | 把 wx-dlh 发布成 pip 包：发布前要拍板的事、一次性准备、每次发版的步骤 |
+| `pypi-publishing.md` | 把 wx-dlh 发布成 pip 包：已定的决定、开源那天要做的、一次性准备、每次发版的步骤 |
 | `test/` | 人工/半自动验证记录（skill 的离线验证等），自动化测试在 `tests/` |
 
 规格说明（需求/设计）如果需要，按 `specs/<主题>.md` 增补，不要提前铺目录。
