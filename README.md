@@ -146,7 +146,7 @@ Python 环境、mitmproxy、代理、面板和 `capture` 也可以都放进容�
 docker compose up -d --build        # 代理 127.0.0.1:8899，面板 http://127.0.0.1:8080
 ```
 
-**省掉的是宿主机上的 Python 环境，省不掉 CA 信任和 WeChat 的代理设置**：这两件事发生在宿主机的 WeChat 客户端上，容器碰不到。CA 默认放在宿主机的 `~/.config/wx-dlh/ca`，和原生安装同一个目录，所以 `scripts/trust-ca.sh`、`run-wechat-proxied.sh` 不用改参数，信任过的 CA 也接着有效。细节、各系统的步骤和验证范围见 `docs/docker.md`。
+**省掉的是宿主机上的 Python 环境，省不掉 CA 信任和 WeChat 的代理设置**：这两件事发生在宿主机的 WeChat 客户端上，容器碰不到。CA 默认放在宿主机的 `~/.config/wx-dlh/ca`，和原生安装同一个目录，所以 `scripts/trust-ca.sh`、`run-wechat-proxied.sh` 不用改参数，信任过的 CA 也接着有效。信任这一步在宿主机上做，用的是宿主机的 openssl（`trust-ca.sh` 没有它就报错退出）；宿主机本来就装了 wx-dlh 的话，`wx-dlh ca --install` 是同一件事，不需要 openssl。细节、各系统的步骤和验证范围见 `docs/docker.md`。
 
 ### 从 wxclip 升级
 
