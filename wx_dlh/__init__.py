@@ -12,6 +12,7 @@ Modules (see docs/development-plan.md):
     downloader  - direct download (never through the proxy) plus head decryption
     pipeline    - capture event -> chosen media -> downloaded, decrypted file
     server      - light web server backing the admin / download dashboard
+    trust       - the CA into (and out of) the trust stores WeChat reads, per OS
     ca, config, inject - the CA, settings, and what gets injected where
 
 Post-processing, on a file that is already playable (M3):

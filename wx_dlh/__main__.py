@@ -17,6 +17,7 @@ from wx_dlh import extract as extract_module
 from wx_dlh import proxy as proxy_module  # mitmproxy-free at import time
 from wx_dlh import server as server_module
 from wx_dlh import summarize as summarize_module
+from wx_dlh import trust as trust_module
 from wx_dlh.config import Settings, read_dotenv
 from wx_dlh.downloader import DownloadError, human_size
 from wx_dlh.keystream import KeystreamError
@@ -239,10 +240,55 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
 
     ca_cmd = sub.add_parser(
         "ca",
-        help="create the proxy CA if needed and print how to trust it",
+        help="create the proxy CA; install, list or remove it in the stores WeChat trusts",
+        description=(
+            "Without an action, creates the CA if needed and shows the trust stores this "
+            "machine has for it. --install puts it into them (creating it first if need "
+            "be) and reads every store back afterwards; --list shows where it is; --remove "
+            "takes it out. Without a store flag, --install uses this OS's stores that need "
+            "neither sudo nor an administrator. Do not run it under sudo: it asks for sudo "
+            "itself, and only for --system. --list and --remove go by the certificate's "
+            "fingerprint: an entry under our own name that holds another CA is reported, "
+            "not removed. scripts/trust-ca.sh does the same on a machine without wx-dlh "
+            "installed, where it needs openssl."
+        ),
     )
     ca_cmd.add_argument("--ca-dir", type=Path, default=defaults.ca_dir, help="CA directory")
-    ca_cmd.add_argument("--app-id", default=ca.FLATPAK_APP_ID, help="Flatpak app id to check for")
+    ca_cmd.add_argument("--app-id", default=ca.FLATPAK_APP_ID, help="WeChat's Flatpak app id")
+    ca_action = ca_cmd.add_mutually_exclusive_group()
+    for flag, action, text in (
+        ("--install", "install", "put the CA into the trust stores"),
+        ("--remove", "remove", "take it out again"),
+        ("--list", "list", "show which stores have it"),
+    ):
+        ca_action.add_argument(
+            flag, dest="trust_action", action="store_const", const=action, help=text
+        )
+    ca_stores = ca_cmd.add_argument_group("stores (default: this OS's stores that need no sudo)")
+    for store, text in (
+        ("flatpak", "Linux: NSS db inside the WeChat Flatpak sandbox"),
+        ("user", "Linux: ~/.pki/nssdb (non-Flatpak builds; your browsers too)"),
+        ("keychain", "macOS: login keychain, trusted for you"),
+        ("windows", "Windows (and WSL): CurrentUser\\Root"),
+        (
+            "system",
+            "Linux: the distro's trust anchors (sudo); macOS: System keychain (sudo); "
+            "Windows: LocalMachine\\Root (administrator shell)",
+        ),
+        ("all", "every store this OS has, --system included"),
+    ):
+        ca_stores.add_argument(
+            f"--{store}", dest="trust_stores", action="append_const", const=store, help=text
+        )
+    ca_cmd.add_argument(
+        "--cert", type=Path, help="CA certificate to use (default: the one in --ca-dir)"
+    )
+    ca_cmd.add_argument(
+        "--os",
+        dest="trust_os",
+        choices=sorted(trust_module.STORES),
+        help="skip detection; under WSL, --os linux targets the distro's own stores",
+    )
 
     download = sub.add_parser(
         "download",
@@ -523,13 +569,48 @@ def _ensure_ca(ca_dir: Path) -> Path:
 
 
 def cmd_ca(args: argparse.Namespace) -> int:
+    if args.trust_action is not None:
+        return _trust_ca(args)
+    stray = [f"--{store}" for store in args.trust_stores or ()]
+    stray += [flag for flag, value in (("--cert", args.cert), ("--os", args.trust_os)) if value]
+    if stray:
+        return _fail(f"wx-dlh ca: {' '.join(stray)} needs --install, --remove or --list")
     try:
         _ensure_ca(args.ca_dir)
     except ImportError:
         print(MISSING_MITMPROXY, file=sys.stderr)
         return 3
-    print(ca.trust_hint(args.ca_dir, args.app_id))
+    print(trust_module.hint(args.ca_dir, args.app_id))
     return 0
+
+
+def _trust_ca(args: argparse.Namespace) -> int:
+    """`wx-dlh ca --install/--remove/--list`. Refusals (sudo, a store this OS lacks) come
+    before anything is created, and only --install creates a CA when there is none: one
+    minted for --list or --remove would be a CA that no store has."""
+    ca_dir = Path(args.ca_dir).expanduser()
+    try:
+        trust = trust_module.Trust.for_this_machine(
+            args.cert or ca.cert_path(ca_dir), os_name=args.trust_os, app_id=args.app_id
+        )
+        stores = trust.stores(args.trust_stores or ())
+    except trust_module.TrustError as exc:
+        return _fail(str(exc))
+    if args.cert is None and args.trust_action == "install":
+        try:
+            trust.cert = _ensure_ca(ca_dir)
+        except ImportError:
+            print(MISSING_MITMPROXY, file=sys.stderr)
+            return 3
+    elif args.cert is None:
+        moved_from = ca.adopt_legacy_ca(ca_dir)
+        if moved_from is not None:
+            print(f"moved the existing CA from {moved_from} to {ca_dir} (renamed)", file=sys.stderr)
+    try:
+        ok = trust.apply(args.trust_action, stores)
+    except trust_module.TrustError as exc:
+        return _fail(str(exc))
+    return 0 if ok else 1
 
 
 def _proxy_settings(args: argparse.Namespace) -> Settings:
@@ -576,7 +657,7 @@ def cmd_proxy(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         print(proxy_module.describe(settings, addon, options))
-        print(f"\n{ca.trust_hint(settings.ca_dir)}")
+        print(f"\n{trust_module.hint(settings.ca_dir)}")
         return 0
 
     print(f"CA: {cert}")
@@ -709,7 +790,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         print(proxy_module.describe(settings, addon, options))
-        print(f"\n{ca.trust_hint(settings.ca_dir)}")
+        print(f"\n{trust_module.hint(settings.ca_dir)}")
         return 0
 
     def on_ready(stop) -> None:

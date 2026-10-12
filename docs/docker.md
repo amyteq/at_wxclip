@@ -41,6 +41,8 @@ docker compose logs proxy           # 看到 "wx-dlh proxy listening on http://0
 scripts/trust-ca.sh                 # 默认就读 ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem
 ```
 
+**这一步在宿主机上做，脚本要宿主机有 openssl**：证书先用它解析过才会进信任库，查库、删库也按它算出来的指纹，没有就直接报错退出。宿主机上本来就装了 wx-dlh 的话，`wx-dlh ca --install` 是同一件事、同样的参数，不需要 openssl。
+
 - macOS：装进登录钥匙串（会弹密码框）。
 - Windows：在 Git Bash 或 WSL 里跑，装进 `CurrentUser\Root`（会弹确认框）。不想装 Git Bash 的话，PowerShell 里 `certutil -user -addstore Root "$env:USERPROFILE\.config\wx-dlh\ca\mitmproxy-ca-cert.pem"` 是同一件事。注意 `~` 是各自环境的家目录：在 PowerShell 里起的 `docker compose`，CA 在 `C:\Users\<你>\.config\wx-dlh\ca`，这时在 WSL 里跑脚本要加 `--cert /mnt/c/Users/<你>/.config/wx-dlh/ca/mitmproxy-ca-cert.pem`；在同一个环境里跑就不用。
 - Linux：装进 Flatpak 沙箱的 NSS 库。但 webview 根本不看信任库（见 `docs/M0-runbook.md`），所以还要 `scripts/run-wechat-proxied.sh --persist`：它把这张 CA 的公钥指纹交给 webview，并让 webview 也走代理。代理在容器里也一样，脚本只看 `127.0.0.1:8899` 有没有人在听。
@@ -104,7 +106,7 @@ docker compose run --rm cli --help
 | `/data/downloads` | `./downloads` |
 | `/data/processed` | `./processed` |
 
-所以 `docker compose run --rm cli ca` 打印的信任提示（`/data/ca/...`、容器里的信任库）不用照做，以上面的宿主机路径和 `scripts/trust-ca.sh` 为准。
+所以 `docker compose run --rm cli ca` 打印的信任提示（`/data/ca/...`、容器里的信任库）不用照做，以上面的宿主机路径和 `scripts/trust-ca.sh`（要宿主机有 openssl，见「信任 CA」那一节）为准。
 
 ### 文件属主
 

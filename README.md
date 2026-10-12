@@ -67,7 +67,7 @@ pip install wx-dlh                                             # 发布到 PyPI 
 pip install "wx-dlh @ git+https://github.com/amyteq/at_wxclip"  # 现在（仓库是私有的，要有访问权限）
 ```
 
-一条命令就装齐，`capture` / `proxy` 要用的 mitmproxy 是默认依赖。想装成独立的命令行工具就用 `pipx install wx-dlh` 或 `uv tool install wx-dlh`。注意 pip 装上的只有 `wx-dlh` 命令本身，`scripts/` 下的辅助脚本（信任 CA、Linux 上带代理启动 WeChat）不在包里，要从仓库取。发布流程见 `docs/pypi-publishing.md`。
+一条命令就装齐，`capture` / `proxy` 要用的 mitmproxy 是默认依赖。想装成独立的命令行工具就用 `pipx install wx-dlh` 或 `uv tool install wx-dlh`。信任 CA 也在这条命令里（`wx-dlh ca --install`，见下）；`scripts/` 下的辅助脚本不在包里，用 pip 装的人只有 Linux 上「带代理启动 WeChat」那一套（`run-wechat-proxied.sh` 和它编译的 preload shim）要从仓库取。发布流程见 `docs/pypi-publishing.md`。
 
 ### 开发
 
@@ -80,11 +80,15 @@ python -m wx_dlh --help
 准备工作两步，细节和判定方法见 `docs/M0-runbook.md`：
 
 ```bash
-.venv/bin/python -m wx_dlh ca      # 生成本地 CA，打印指纹与该装到哪个信任库
-scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
+.venv/bin/python -m wx_dlh ca             # 生成本地 CA，打印指纹，列出这台机器有哪些信任库
+.venv/bin/python -m wx_dlh ca --install   # 装进探测到的信任库（本机 WeChat 是 Flatpak → 沙箱内 NSS）
 ```
 
-`trust-ca.sh` 按操作系统挑信任库，装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。**别用 `sudo` 跑整个脚本**：它只在 `--system` 时自己要 sudo，整个脚本跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝。
+`wx-dlh ca --install` 按操作系统挑信任库，没有 CA 时先生成一张；装完都会去真库里回查一次（Linux 上「命令全成功、客户端照样不认」的教训）。`--list` 查看、`--remove` 撤销，两者都按指纹认证书：同名的旧 CA 会被说成「another CA」，不会冒充当前这张，`--remove` 也只删指纹对得上的那一张——同名（或同文件名）但属于别的 CA 的那张只报告、不删，读不出来的也不删，并且退出码非 0。**库本身查不动**（NSS 库打不开、钥匙串打不开、certutil 查不了 Root 库）同样算失败：不会说成「没装」「没什么可删的」，退出码非 0 —— 查不动的库里那张 CA 可能还在。`--cert` 给的文件会先交给 openssl 读一遍，而且要求 openssl 重新编码出来的字节跟文件里的一模一样，才会进信任库：带私钥的、PEM 壳里装着别的东西的、一个文件里塞了好几张的、证书后面还跟着别的字节的、以及不是 CA 证书的（信任库装的是信任锚），都在碰信任库之前就拒掉；长度、标签写法不合 DER 的也拒——openssl 会把它们悄悄改写之后再算指纹，这边按文件原样算，两个指纹对不上，装进去也就再也查不到、删不掉。要修就按提示跑 `openssl x509 -in FILE -out FILE` 重写一遍。给了 `--flatpak` / `--user` / `--system` 之类的参数就**只**装那几个，不是在默认之上再加一个，要全装用 `--all`。
+
+**别用 `sudo` 跑它**：它只在 `--system` 时自己要 sudo，整个命令跑在 root 下会把 root 的家目录和钥匙串卷进来，所以会直接拒绝（WSL 也一样——它装的是 Windows 宿主机的证书库，但自己是 POSIX，sudo 还是 sudo）。`--cert` 只收**纯证书**的 `mitmproxy-ca-cert.pem`：带私钥的 `mitmproxy-ca.pem` 会被当场拒掉，不然 `--system` 会把 CA 私钥按 0644 装进系统信任锚目录。
+
+`scripts/trust-ca.sh` 是同一套逻辑的 shell 版，参数完全一样（`scripts/trust-ca.sh --install --system` ≡ `wx-dlh ca --install --system`），留给本机没装 wx-dlh 的情况，比如 wx-dlh 跑在 Docker 里、宿主机只需要信任 CA。**它要有 openssl**：证书先用 openssl 解析过才会进信任库，查库、删库也都按它算出来的指纹；没有 openssl 就直接报错退出，不会把一个没读过的文件装进信任库。`wx-dlh ca` 不需要 openssl。
 
 | 系统 | 默认（不要 sudo） | `--system` | 状态 |
 |------|------------------|-----------|------|
@@ -92,7 +96,7 @@ scripts/trust-ca.sh                # 装进探测到的信任库（本机 WeChat
 | macOS | 登录钥匙串，仅当前用户信任（会弹密码框） | 系统钥匙串，admin 域信任（sudo；参考实现用的就是它） | **未在真实 WeChat 上验证**（#11） |
 | Windows | `CurrentUser\Root`（certutil，会弹确认框） | `LocalMachine\Root`（要「以管理员身份」开的 shell） | **未验证**（#11） |
 
-Windows 上在 Git Bash / MSYS2 / Cygwin 里跑；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。`--list` 查看、`--remove` 撤销，按指纹找证书，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）。
+Windows 上用 Windows 自己的 Python 跑就行，不需要 Git Bash（shell 版才要 Git Bash / MSYS2 / Cygwin）；**在 WSL 里跑也是装进 Windows 宿主的证书库**，因为 WeChat 跑在宿主上，WSL 发行版自己的信任库它根本不看（`--os linux` 可以改回去）。查找证书按指纹，不按名字（所有 mitmproxy CA 都叫 `mitmproxy`）；指纹由 Python 自己算，不需要 openssl（shell 版要）。
 
 然后一条命令从播放到可播放文件（默认抓到第一个就停，文件落在 `downloads/`）：
 
@@ -142,7 +146,7 @@ Python 环境、mitmproxy、代理、面板和 `capture` 也可以都放进容�
 docker compose up -d --build        # 代理 127.0.0.1:8899，面板 http://127.0.0.1:8080
 ```
 
-**省掉的是宿主机上的 Python 环境，省不掉 CA 信任和 WeChat 的代理设置**：这两件事发生在宿主机的 WeChat 客户端上，容器碰不到。CA 默认放在宿主机的 `~/.config/wx-dlh/ca`，和原生安装同一个目录，所以 `scripts/trust-ca.sh`、`run-wechat-proxied.sh` 不用改参数，信任过的 CA 也接着有效。细节、各系统的步骤和验证范围见 `docs/docker.md`。
+**省掉的是宿主机上的 Python 环境，省不掉 CA 信任和 WeChat 的代理设置**：这两件事发生在宿主机的 WeChat 客户端上，容器碰不到。CA 默认放在宿主机的 `~/.config/wx-dlh/ca`，和原生安装同一个目录，所以 `scripts/trust-ca.sh`、`run-wechat-proxied.sh` 不用改参数，信任过的 CA 也接着有效。信任这一步在宿主机上做，用的是宿主机的 openssl（`trust-ca.sh` 没有它就报错退出）；宿主机本来就装了 wx-dlh 的话，`wx-dlh ca --install` 是同一件事，不需要 openssl。细节、各系统的步骤和验证范围见 `docs/docker.md`。
 
 ### 从 wxclip 升级
 
@@ -197,7 +201,7 @@ wx-dlh extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 
 | 路径       | 说明                                                    |
 |------------|---------------------------------------------------------|
-| `wx_dlh/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server / media / frames / extract / summarize / postprocess |
+| `wx_dlh/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server、CA 与信任库 ca / trust、后处理 media / frames / extract / summarize / postprocess |
 | `web/`     | 注入脚本与前端页面                                       |
 | `docs/`    | 背景、开发计划、规格说明                                 |
 | `tests/`   | pytest 测试                                              |

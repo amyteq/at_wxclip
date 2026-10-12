@@ -42,7 +42,7 @@ def test_ca_creates_the_ca_and_explains_the_trust_stores(tmp_path, capsys):
     assert main(["ca", "--ca-dir", str(tmp_path / "ca"), "--app-id", "com.example.App"]) == 0
     out = capsys.readouterr().out
     assert "mitmproxy-ca-cert.pem" in out
-    assert "com.example.App" in out
+    assert "wx-dlh ca --install" in out
     assert (tmp_path / "ca" / "mitmproxy-ca-cert.pem").is_file()
 
 

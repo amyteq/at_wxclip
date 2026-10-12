@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Install, list or remove the wx-dlh proxy CA in the trust stores WeChat reads.
 #
+# With wx-dlh installed, `wx-dlh ca --install` does the same - it is this script ported to
+# Python (wx_dlh/trust.py), and on Windows it needs no Git Bash. This script stays for a
+# machine that runs wx-dlh in Docker and has no Python of its own. The two take the same
+# flags and are held to the same cases, so a change to one is a change to both.
+#
 # Which store that is depends on the OS, and on Linux on how WeChat was installed:
 #
 # Linux - WeChat renders Channels pages in a Chromium-based webview (RadiumWMPF/WeChatAppEx),
@@ -30,6 +35,10 @@
 #   windows  CurrentUser\Root (no admin; Windows shows a confirmation dialog)
 #   system   LocalMachine\Root (needs a shell started "as administrator")
 #
+# It needs openssl, which the Python version does not: that is where the certificate is
+# parsed before anything is installed, and where the fingerprint every store is searched
+# by comes from. Rather than install a file it never read, the script stops without it.
+#
 # Only Linux has been carried end to end (docs/M0-runbook.md). The macOS and Windows
 # branches run the commands the reference implementation documents and then check the
 # store they wrote to, but nobody has yet watched WeChat accept the CA on either - see
@@ -50,8 +59,8 @@ TARGETS=()
 
 usage() {
   cat <<'USAGE'
-usage: scripts/trust-ca.sh [TARGET...] [--remove|--list] [--cert PATH] [--app-id ID]
-                           [--os linux|macos|windows]
+usage: scripts/trust-ca.sh [TARGET...] [--install|--remove|--list] [--cert PATH]
+                           [--app-id ID] [--os linux|macos|windows]
 
 With no target, the stores this OS has are used - never one that needs sudo or admin.
 
@@ -65,11 +74,20 @@ With no target, the stores this OS has are used - never one that needs sudo or a
   (WSL counts as Windows: WeChat runs on the host, so the host's store is the one.)
 
   --all       every store this OS has, including --system
+  --install   put the certificate in (the default)
   --remove    take the certificate back out
   --list      show what is installed where
-  --cert      certificate to use (default: $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem,
-              i.e. ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
+  --cert      CA certificate to use - the certificate alone, never the mitmproxy-ca.pem
+              beside it that carries the private key as well (default:
+              $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem, i.e.
+              ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
   --os        skip detection; under WSL, --os linux targets the distro's own stores
+
+Needs openssl: it reads the certificate with it before any store is touched, and finds
+certificates in a store by fingerprint. `wx-dlh ca` does the same without openssl.
+
+--remove takes out only the certificate given here. An entry under the same nickname or
+file name that holds another CA is reported and left alone.
 
 Do not run it with sudo: it asks for sudo itself, and only for --system.
 USAGE
@@ -86,6 +104,7 @@ while [ $# -gt 0 ]; do
     --windows) TARGETS+=(windows) ;;
     --system) TARGETS+=(system) ;;
     --all) TARGETS+=(all) ;;
+    --install) ACTION="add" ;;
     --remove) ACTION="remove" ;;
     --list) ACTION="list" ;;
     --cert) [ $# -ge 2 ] || die "--cert needs a path"; CERT="$2"; shift ;;
@@ -104,12 +123,13 @@ is_wsl() {
     || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null
 }
 
+KERNEL="$(uname -s)"
 if [ -z "$OS" ]; then
-  case "$(uname -s)" in
+  case "$KERNEL" in
     Darwin) OS=macos ;;
     MINGW*|MSYS*|CYGWIN*) OS=windows ;;
     Linux) if is_wsl; then OS=windows; else OS=linux; fi ;;
-    *) die "unsupported OS: $(uname -s) - pass --os linux|macos|windows" ;;
+    *) die "unsupported OS: $KERNEL - pass --os linux|macos|windows" ;;
   esac
 fi
 case "$OS" in
@@ -117,13 +137,24 @@ case "$OS" in
   *) die "--os must be linux, macos or windows, not: $OS" ;;
 esac
 
+# openssl is a requirement, not a nicety: it is what reads the certificate before a store
+# is touched, and what turns it into the fingerprint every store here is searched by.
+# Without it this script would have to hand a file it never parsed to a trust store.
+have openssl || die "openssl not found - this script needs it to read the certificate and
+its fingerprint; install it (openssl / libressl), or use: wx-dlh ca --install"
+
 # The whole script under sudo would put root's HOME (and on macOS root's keychain) in
 # play, and the default certificate path with it. Ask for sudo per command instead.
-if [ "$OS" != windows ] && [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+# What decides this is the kernel, not $OS: WSL is "windows" because WeChat runs on the
+# host, but it is POSIX underneath and sudo there is still sudo. Git Bash/MSYS/Cygwin
+# have no sudo at all - an elevated shell is how LocalMachine is reached there.
+case "$KERNEL" in MINGW*|MSYS*|CYGWIN*) POSIX_HOST=no ;; *) POSIX_HOST=yes ;; esac
+if [ "$POSIX_HOST" = yes ] && [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
   die "run this without sudo - it asks for sudo itself, and only for --system"
 fi
 SUDO="sudo"
-[ "$OS" = windows ] || [ "$(id -u)" != 0 ] || SUDO=""  # already root (a container, say)
+[ "$POSIX_HOST" = yes ] || SUDO=""
+[ "$(id -u)" != 0 ] || SUDO=""  # already root (a container, say)
 
 # --- which stores ----------------------------------------------------------------------
 
@@ -164,47 +195,147 @@ else
   esac
 fi
 
-if [ "$ACTION" != "list" ] && [ ! -f "$CERT" ]; then
+# Listing needs the certificate too: a store is searched by fingerprint, so without it
+# there is nothing to search for.
+if [ ! -f "$CERT" ]; then
   echo "certificate not found: $CERT" >&2
   echo "create it first:  wx-dlh ca   (or: python -m wx_dlh ca)" >&2
   exit 1
 fi
 
+# --cert takes a path, and mitmproxy-ca.pem sits next to mitmproxy-ca-cert.pem looking
+# just as plausible - but it is the certificate *and* the CA's private key, and --system
+# installs what it is given as a 0644 trust anchor. Refuse it before any store is touched.
+if grep -q -- "-----BEGIN .*PRIVATE KEY-----" "$CERT"; then
+  die "$CERT holds the CA private key as well as the certificate; pass mitmproxy-ca-cert.pem"
+fi
+# The delimiters say nothing about what is between them - a BEGIN CERTIFICATE block can
+# wrap any bytes at all - and a bundle would have all but its first certificate installed
+# unchecked, so openssl parses the file here, before a store sees it.
+BLOCKS="$(grep -c -- "-----BEGIN CERTIFICATE-----" "$CERT" 2>/dev/null || true)"
+[ "${BLOCKS:-0}" -ge 1 ] || die "not a PEM certificate: $CERT"
+[ "${BLOCKS:-0}" -le 1 ] || die "$CERT holds $BLOCKS certificates; pass the CA's own, alone"
+openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
+  || die "openssl reads no X.509 certificate in $CERT"
+
+# A store below is handed this file as a trust *anchor*, so what may not sign certificates
+# has no business in it. Whether it may is openssl's own X509_check_ca - basicConstraints
+# CA:TRUE, or one of the older shapes it still counts as a CA, and a keyUsage that permits
+# signing certificates where there is one - and `-purpose` prints that very function as its
+# OCSP helper CA line (the other lines ask it and then more besides, or, like Any Purpose,
+# answer Yes to everything). "Yes" or "Yes (WARNING code=N)": the code is which shape it
+# recognised, not a doubt about whether it did. wx_dlh/ca.py asks the same question of the
+# same library - Python's get_ca_certs hands back only what X509_check_ca accepts.
+case "$(openssl x509 -in "$CERT" -noout -purpose 2>/dev/null \
+          | sed -n 's/^OCSP helper CA *: *//p')" in
+  Yes*) ;;
+  *) die "$CERT holds a certificate, but not a CA certificate (openssl x509 -in $CERT
+-noout -purpose prints: OCSP helper CA : No); a trust store takes certification
+authorities, so pass the mitmproxy-ca-cert.pem a CA directory holds" ;;
+esac
+
+# Parsing is not enough on its own: openssl stops at the end of the first ASN.1 value in
+# the block and never looks at what follows it, while --system copies the file in as it
+# stands, 0644. So what openssl re-encodes has to be every byte the block decodes to.
+# One comparison, two things refused: bytes riding behind the certificate (another
+# certificate, a raw private key - which the text search above cannot see - or padding),
+# and a length DER would not write that way, which openssl silently canonicalises before
+# it prints the fingerprint the stores below are searched by. wx_dlh/ca.py makes this very
+# comparison too - it reaches the same library through Python's ssl rather than the CLI -
+# so the two halves take and refuse the same files without either holding a list of its own
+# of which spellings openssl keeps.
+# The base64 goes to openssl in lines of 64 the way PEM itself writes them, not as the one
+# long line it was joined into: `enc -base64 -d -A` decodes to nothing at all on OpenSSL
+# 3.0.13 (Ubuntu 24.04, where CI runs), which would refuse every certificate there is.
+# Joining first and re-wrapping after is what lets a file whose body is already one line -
+# or CRLF, or unwrapped by an editor - decode like any other.
+pem_block_bytes() {
+  sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' "$1" \
+    | sed -e '/-----/d' -e 's/[[:space:]]//g' \
+    | awk '{ b = b $0 } END { while (length(b)) { print substr(b, 1, 64); b = substr(b, 65) } }' \
+    | openssl enc -base64 -d 2>/dev/null
+}
+cmp -s <(openssl x509 -in "$CERT" -outform DER 2>/dev/null) <(pem_block_bytes "$CERT") \
+  || die "$CERT holds more than the certificate between its PEM delimiters, or a length
+DER would not write that way; pass the certificate alone, re-encoding it if need be with:
+openssl x509 -in $CERT -out <new file>"
+# And nothing outside the block either, for the same reason: the file is installed whole,
+# so a DER private key appended after -----END CERTIFICATE----- would ride along unread.
+if sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/d' "$CERT" \
+    | grep -q '[^[:space:]]'; then
+  die "$CERT holds bytes outside its PEM certificate block; pass a file with nothing in it
+but the certificate, e.g.: openssl x509 -in $CERT -out <new file>"
+fi
+
 # Stores are searched by fingerprint, not by name: every mitmproxy CA is called
 # "mitmproxy", and another tool's copy may well be sitting in the same store.
-SHA1=""
-if [ -f "$CERT" ] && have openssl; then
-  SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
-fi
+SHA1="$(openssl x509 -in "$CERT" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
+SHA256="$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//')"
 
-if [ "$ACTION" != "list" ]; then
-  echo "certificate: $CERT ($OS)"
-  have openssl && openssl x509 -in "$CERT" -noout -subject -fingerprint -sha256 | sed 's/^/  /'
-fi
+echo "certificate: $CERT ($OS)"
+openssl x509 -in "$CERT" -noout -subject -fingerprint -sha256 | sed 's/^/  /'
 
-need_sha1() {
-  [ -n "$SHA1" ] && return 0
-  echo "[$1] needs openssl (to find the certificate by fingerprint) - skipped" >&2
-  return 1
+# Which certificate a store already holds: the one asked about, or another - a CA from
+# before the last `wx-dlh ca` keeps both the nickname and the file name.
+which_ca() {
+  if [ -z "$1" ]; then echo "could not be read"
+  elif [ "$1" = "$SHA256" ]; then echo "this CA"
+  else echo "another CA, SHA-256 $1"; fi
+}
+
+file_sha256() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'; }
+
+# A command that changes a store, run so that its failure cannot be passed over. Every
+# apply function below is called on the left of `||` at the end of this script, and that
+# switches `set -e` off inside it: an unchecked install, rebuild or delete would fall
+# through to the line that reports success, and the store would be left as it was with
+# exit 0. wx_dlh/trust.py puts the same check on the same commands (`_change`), so this
+# is where the two halves agree on which failures count.
+change() {
+  local label="$1" status=0
+  shift
+  "$@" || status=$?
+  if [ "$status" != 0 ]; then
+    echo "[$label] $* exited $status" >&2
+    return 1
+  fi
 }
 
 # --- Linux: NSS ------------------------------------------------------------------------
 
 flatpak_db() { echo "$HOME/.var/app/$APP_ID/.pki/nssdb"; }
 
+# The entries under our two nicknames, one per line; non-zero when the database is there
+# but certutil cannot open it. A database it cannot open - locked, corrupt,
+# password-protected - is not a database our CA is absent from, and saying so would make
+# --remove report an undo that undid nothing and --list call a trusted CA gone.
+nss_ours() {
+  local db="$1" label="$2" listed
+  [ -f "$db/cert9.db" ] || return 0
+  if ! listed="$(certutil -d "sql:$db" -L 2>&1)"; then
+    echo "[$label] cannot read $db: certutil failed" >&2
+    return 1
+  fi
+  printf '%s\n' "$listed" | grep -E "^($NICKNAME|$LEGACY_NICKNAME)[[:space:]]" || true
+}
+
 nss_apply() {
-  local db="$1" label="$2"
+  local db="$1" label="$2" ours nick found removed unreadable
   if ! have certutil; then
     echo "[$label] certutil not found (install nss / libnss3-tools) - skipped" >&2
     return 1
   fi
   case "$ACTION" in
     add)
-      mkdir -p "$db"
-      [ -f "$db/cert9.db" ] || certutil -d "sql:$db" -N --empty-password
+      mkdir -p "$db" || { echo "[$label] cannot create $db" >&2; return 1; }
+      if [ ! -f "$db/cert9.db" ]; then
+        change "$label" certutil -d "sql:$db" -N --empty-password || return 1
+      fi
+      # These two only clear a previous install; there is usually nothing to delete, and
+      # the port ignores their result in the same way.
       certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1 || true
       certutil -d "sql:$db" -D -n "$LEGACY_NICKNAME" >/dev/null 2>&1 || true
-      certutil -d "sql:$db" -A -t "C,," -n "$NICKNAME" -i "$CERT"
+      change "$label" certutil -d "sql:$db" -A -t "C,," -n "$NICKNAME" -i "$CERT" || return 1
       if certutil -d "sql:$db" -L -n "$NICKNAME" >/dev/null 2>&1; then
         echo "[$label] installed in $db (read back)"
       else
@@ -213,19 +344,49 @@ nss_apply() {
       fi
       ;;
     remove)
-      certutil -d "sql:$db" -D -n "$LEGACY_NICKNAME" >/dev/null 2>&1 || true
-      if certutil -d "sql:$db" -D -n "$NICKNAME" >/dev/null 2>&1; then
-        echo "[$label] removed from $db"
-      else
+      ours="$(nss_ours "$db" "$label")" || return 1
+      removed=""
+      unreadable=0
+      for nick in $(printf '%s\n' "$ours" | awk '{print $1}' | sort -u); do
+        # The nickname is ours; the certificate under it need not be. Deleting what
+        # --list would call "another CA" would take out an anchor nobody asked about.
+        found="$(nss_sha256 "$db" "$nick")"
+        if [ "$found" != "$SHA256" ]; then
+          echo "[$label] $nick in $db: $(which_ca "$found") - left alone; take it out" \
+               "with: certutil -d sql:$db -D -n $nick" >&2
+          [ -n "$found" ] || unreadable=1
+          continue
+        fi
+        change "$label" certutil -d "sql:$db" -D -n "$nick" || return 1
+        removed="$removed $nick"
+      done
+      if [ -n "$removed" ]; then
+        echo "[$label] removed$removed from $db"
+      elif [ -z "$ours" ]; then
         echo "[$label] nothing to remove in $db"
       fi
+      [ "$unreadable" = 0 ] || return 1
       ;;
     list)
       echo "[$label] $db"
-      certutil -d "sql:$db" -L 2>/dev/null \
-        | grep -E "^($NICKNAME|$LEGACY_NICKNAME)[[:space:]]" | sed 's/^/  /' || echo "  (not installed)"
+      ours="$(nss_ours "$db" "$label")" || return 1
+      if [ -z "$ours" ]; then
+        echo "  (not installed)"
+      else
+        printf '%s\n' "$ours" | while read -r line; do
+          nick="${line%% *}"
+          echo "  $line  ($(which_ca "$(nss_sha256 "$db" "$nick")"))"
+        done
+      fi
       ;;
   esac
+}
+
+# Which certificate sits under a nickname: the name alone does not say, and it stays the
+# same across a `wx-dlh ca` that minted a new CA.
+nss_sha256() {
+  certutil -d "sql:$1" -L -n "$2" -a 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'
 }
 
 # A Flatpak home only exposes the subpaths its metadata persists, so the database above
@@ -234,7 +395,7 @@ nss_apply() {
 flatpak_persist_pki() {
   [ "$ACTION" = "add" ] || return 0
   have flatpak || return 0
-  flatpak override --user "$APP_ID" --persist=.pki
+  change "flatpak:$APP_ID" flatpak override --user "$APP_ID" --persist=.pki || return 1
   echo "[flatpak:$APP_ID] ~/.pki is now persisted into the sandbox"
   if timeout 60 flatpak run --command=sh "$APP_ID" \
       -c '[ -f "$HOME/.pki/nssdb/cert9.db" ]' >/dev/null 2>&1; then
@@ -264,7 +425,7 @@ linux_anchor_dir() {
 }
 
 linux_system_apply() {
-  local found dir update anchor legacy
+  local found dir update anchor legacy path shown sha removed unreadable
   if ! found="$(linux_anchor_dir)"; then
     echo "[system] no supported trust-anchor directory (looked for update-ca-trust and" >&2
     echo "         update-ca-certificates layouts) - install $CERT by hand" >&2
@@ -276,9 +437,13 @@ linux_system_apply() {
   legacy="$dir/$LEGACY_NICKNAME.crt"
   case "$ACTION" in
     add)
-      [ -f "$legacy" ] && $SUDO rm -f "$legacy"
-      $SUDO install -m 0644 "$CERT" "$anchor"
-      $SUDO "$update"
+      if [ -f "$legacy" ]; then
+        change system $SUDO rm -f "$legacy" || return 1
+      fi
+      change system $SUDO install -m 0644 "$CERT" "$anchor" || return 1
+      # The anchor is a file until the bundle is rebuilt from it; a rebuild that failed
+      # leaves a copy nothing reads, and `cmp` below would still call that an install.
+      change system $SUDO "$update" || return 1
       if cmp -s "$CERT" "$anchor"; then
         echo "[system] installed as $anchor ($update)"
       else
@@ -288,16 +453,42 @@ linux_system_apply() {
       echo "[system] note: a Flatpak app does not see this - it uses the runtime's bundle"
       ;;
     remove)
-      if [ -f "$anchor" ] || [ -f "$legacy" ]; then
-        $SUDO rm -f "$anchor" "$legacy"
-        $SUDO "$update"
-        echo "[system] removed $anchor"
-      else
+      # The file name is ours; the certificate in it need not be. Removing what --list
+      # would call "another CA" would take out an anchor nobody asked about.
+      removed=""
+      unreadable=0
+      shown=0
+      for path in "$anchor" "$legacy"; do
+        [ -f "$path" ] || continue
+        shown=1
+        sha="$(file_sha256 "$path")"
+        if [ "$sha" = "$SHA256" ]; then
+          change system $SUDO rm -f "$path" || return 1
+          removed="$removed $path"
+        else
+          echo "[system] $path: $(which_ca "$sha") - left alone; take it out with:" \
+               "${SUDO:+$SUDO }rm $path && ${SUDO:+$SUDO }$update" >&2
+          [ -n "$sha" ] || unreadable=1
+        fi
+      done
+      if [ -n "$removed" ]; then
+        change system $SUDO "$update" || return 1
+        echo "[system] removed$removed"
+      elif [ "$shown" = 0 ]; then
         echo "[system] nothing to remove in $dir"
       fi
+      [ "$unreadable" = 0 ] || return 1
       ;;
     list)
-      if [ -f "$anchor" ]; then echo "[system] $anchor present"; else echo "[system] not installed in $dir"; fi
+      # Both names, and the fingerprint of each: the file being there says nothing about
+      # *which* CA is in it, and a pre-rename install is still an install.
+      shown=0
+      for path in "$anchor" "$legacy"; do
+        [ -f "$path" ] || continue
+        shown=1
+        echo "[system] $path ($(which_ca "$(file_sha256 "$path")"))"
+      done
+      [ "$shown" = 1 ] || echo "[system] not installed in $dir"
       ;;
   esac
 }
@@ -315,12 +506,28 @@ login_keychain() {
 # a keychain alone does not make a root trusted.
 macos_trusted() { security verify-cert -c "$CERT" >/dev/null 2>&1; }
 
+# Whether the keychain holds this certificate: 0 it does, 1 it does not, 2 the query
+# itself failed. A keychain `security` could not open - a path that is not there, one
+# this user may not read - is not a keychain our CA is absent from, and saying so would
+# make --remove report an undo that undid nothing and --list call a trusted CA gone, both
+# with exit 0. A search that found nothing has a status of its own (errSecItemNotFound,
+# which a shell sees as the low byte of -25300, i.e. 44) and says as much in words; both
+# are read, neither is verified against a real keychain (#11). The listing is captured
+# rather than piped, because a pipe would hide the status it is being told apart by.
+# wx_dlh/trust.py reads the same two signals (`_macos_in`).
 macos_in_keychain() {
-  security find-certificate -a -Z "$1" 2>/dev/null | grep -qi "SHA-1 hash: $SHA1"
+  local kc="$1" label="$2" listed status=0
+  listed="$(security find-certificate -a -Z "$kc" 2>&1)" || status=$?
+  if [ "$status" != 0 ] && [ "$status" != 44 ] \
+     && ! printf '%s\n' "$listed" | grep -qi "could not be found in the keychain"; then
+    echo "[$label] cannot read $kc: security exited $status" >&2
+    return 2
+  fi
+  printf '%s\n' "$listed" | grep -qi "SHA-1 hash: $SHA1"
 }
 
 macos_apply() {
-  local label="$1" kc domain=() run=()
+  local label="$1" kc domain=() run=() found
   if ! have security; then
     echo "[$label] the security tool is missing - is this really macOS?" >&2
     return 1
@@ -335,8 +542,8 @@ macos_apply() {
   case "$ACTION" in
     add)
       # Bash 3.2 (macOS's) treats "${empty[@]}" as unbound under set -u; hence the +.
-      ${run[@]+"${run[@]}"} security add-trusted-cert ${domain[@]+"${domain[@]}"} \
-        -r trustRoot -k "$kc" "$CERT"
+      change "$label" ${run[@]+"${run[@]}"} security add-trusted-cert \
+        ${domain[@]+"${domain[@]}"} -r trustRoot -k "$kc" "$CERT" || return 1
       if macos_trusted; then
         echo "[$label] trusted in $kc (read back with security verify-cert)"
       else
@@ -345,19 +552,26 @@ macos_apply() {
       fi
       ;;
     remove)
-      need_sha1 "$label" || return 1
+      # Best effort, as in the port: there are no trust settings to take back when the
+      # certificate was only ever in the keychain, and that is not a failure.
       ${run[@]+"${run[@]}"} security remove-trusted-cert ${domain[@]+"${domain[@]}"} "$CERT" \
         >/dev/null 2>&1 || true
-      if macos_in_keychain "$kc"; then
-        ${run[@]+"${run[@]}"} security delete-certificate -Z "$SHA1" "$kc"
+      found=0
+      macos_in_keychain "$kc" "$label" || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then
+        change "$label" ${run[@]+"${run[@]}"} security delete-certificate -Z "$SHA1" "$kc" \
+          || return 1
         echo "[$label] removed from $kc"
       else
         echo "[$label] nothing to remove in $kc"
       fi
       ;;
     list)
-      need_sha1 "$label" || return 1
-      if macos_in_keychain "$kc"; then echo "[$label] in $kc"; else echo "[$label] not in $kc"; fi
+      found=0
+      macos_in_keychain "$kc" "$label" || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then echo "[$label] in $kc"; else echo "[$label] not in $kc"; fi
       ;;
   esac
 }
@@ -386,8 +600,26 @@ win_path() {
   fi
 }
 
+# Whether the Root store holds this certificate: 0 it does, 1 it does not, 2 the query
+# itself failed - a store that could not be searched is not a store our CA is absent
+# from. certutil says "no such certificate" with CRYPT_E_NOT_FOUND: it exits with that
+# HRESULT and prints it too, and both are read, because neither is there in every
+# setting - a Linux parent under WSL interop sees only the low byte of the status, while
+# the hex code is in the output on a localized Windows as well. Not verified against a
+# real Windows (#11). wx_dlh/trust.py reads the same two signals.
+win_in_store() {
+  local exe="$1" label="$2" listed status=0
+  shift 2  # what is left is the scope, which is empty for LocalMachine - hence the +
+  listed="$("$exe" ${@+"$@"} -store Root "$SHA1" 2>&1)" || status=$?
+  [ "$status" != 0 ] || return 0
+  [ "$status" != 2148081668 ] || return 1   # 0x80092004, where the whole status survives
+  case "$listed" in *0x80092004*|*CRYPT_E_NOT_FOUND*) return 1 ;; esac
+  echo "[$label] cannot read the Root store: certutil exited $status" >&2
+  return 2
+}
+
 windows_apply() {
-  local label="$1" exe scope=() store
+  local label="$1" exe scope=() store found
   if ! exe="$(certutil_exe)"; then
     echo "[$label] certutil.exe not found - run this from Git Bash, MSYS2, Cygwin or WSL" >&2
     return 1
@@ -399,27 +631,30 @@ windows_apply() {
         [ "$label" = system ] && echo "[$label] LocalMachine needs a shell started as administrator" >&2
         return 1
       fi
-      if [ -z "$SHA1" ]; then
-        echo "[$label] added to $store (no openssl, so not read back)"
-      elif "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
-        echo "[$label] installed in $store (read back)"
-      else
+      found=0
+      win_in_store "$exe" "$label" ${scope[@]+"${scope[@]}"} || found=$?
+      if [ "$found" = 1 ]; then  # 2 has said why already
         echo "[$label] WARNING: certutil reported success but $store does not list it" >&2
-        return 1
       fi
+      [ "$found" = 0 ] || return 1
+      echo "[$label] installed in $store (read back)"
       ;;
     remove)
-      need_sha1 "$label" || return 1
-      if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
-        "$exe" ${scope[@]+"${scope[@]}"} -delstore Root "$SHA1"
+      found=0
+      win_in_store "$exe" "$label" ${scope[@]+"${scope[@]}"} || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then
+        change "$label" "$exe" ${scope[@]+"${scope[@]}"} -delstore Root "$SHA1" || return 1
         echo "[$label] removed from $store"
       else
         echo "[$label] nothing to remove in $store"
       fi
       ;;
     list)
-      need_sha1 "$label" || return 1
-      if "$exe" ${scope[@]+"${scope[@]}"} -store Root "$SHA1" >/dev/null 2>&1; then
+      found=0
+      win_in_store "$exe" "$label" ${scope[@]+"${scope[@]}"} || found=$?
+      [ "$found" != 2 ] || return 1
+      if [ "$found" = 0 ]; then
         echo "[$label] in $store"
       else
         echo "[$label] not in $store"

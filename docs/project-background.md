@@ -60,10 +60,10 @@
 
 - WeChat 是 **Flatpak 包**：`com.tencent.WeChat` 4.0.1.11，runtime `org.freedesktop.Platform 25.08`；沙箱权限只有 `shared=ipc;network`、`sockets=pulseaudio;x11`、`filesystems=xdg-download:ro`。**它没有宿主机家目录的访问权**，HOME 实际落在 `~/.var/app/com.tencent.WeChat/`。同机还装了 `wechat-bin`（`/opt/wechat`），当前运行的是 Flatpak 那个。
 - 视频号相关的渲染跑在 `RadiumWMPF/runtime/WeChatAppEx` 这组进程里，进程参数是 Chromium 的（`network.mojom.NetworkService`、`gpu-process`、`--enable-features=...`），UA 片段为 `MicroMessenger/7.0.20.1781(0x6700143B) ... UnifiedPCLinuxWechat(0xf274010b)`。**即 webview 是 Chromium 内核**，这是注入路线在 Linux 上还有戏的原因。
-- 因此 CA 的信任位置和 Win/Mac 都不一样。Flatpak 沙箱的 `/etc/pki` 来自 runtime 自带的证书包，**宿主机 `update-ca-trust` 装进去的 CA 它看不到**；`scripts/trust-ca.sh` 覆盖了沙箱 NSS / 用户 NSS / 系统信任库三处，这对**主进程**有效。但 webview 不吃这一套 —— 它的根证书是编译在二进制里的，见下面那一节。
+- 因此 CA 的信任位置和 Win/Mac 都不一样。Flatpak 沙箱的 `/etc/pki` 来自 runtime 自带的证书包，**宿主机 `update-ca-trust` 装进去的 CA 它看不到**；`wx-dlh ca --install`（shell 版 `scripts/trust-ca.sh`）覆盖了沙箱 NSS / 用户 NSS / 系统信任库三处，这对**主进程**有效。但 webview 不吃这一套 —— 它的根证书是编译在二进制里的，见下面那一节。
 - **应用内代理设置可用**（issue #4 的截图）。Flatpak 默认 `shared=network`，和宿主机共享网络命名空间，所以沙箱内的 `127.0.0.1:8899` 就是宿主机上的代理。**但它只作用于主进程**：`WeChatAppEx` 的 renderer 进程既无 `--proxy-server` 参数也无 proxy 环境变量，webview 直连（2026-09-11 实测，下面第 2 条）。
 - 主进程的网络长这样：`sgshort.wechat.com:80` 上大量 `POST /mmtls/<id>`（mmtls 套在 HTTP 里，body 不可读），加上 `wx.qlogo.cn`、`mmhead.c2c.wechat.com`、`dl.wechat.com`、`inews.gtimg.com` 的普通 HTTPS。**host 是 `*.wechat.com`，不是参考实现那套 `*.weixin.qq.com`。**
-- **本地 CA 会被接受**：上面那些 HTTPS 全部被成功 MITM 出明文，一次 TLS 失败都没有（CA 装在沙箱内的 NSS 库里，见 `scripts/trust-ca.sh`）。注意这说的是**主进程**；webview 的证书校验是另一条路，见下。
+- **本地 CA 会被接受**：上面那些 HTTPS 全部被成功 MITM 出明文，一次 TLS 失败都没有（CA 装在沙箱内的 NSS 库里，见 `wx_dlh/trust.py`）。注意这说的是**主进程**；webview 的证书校验是另一条路，见下。
 - **Flatpak 家目录只持久化 metadata 列出的子目录**：WeChat 是 `.xwechat` 和 `xwechat_files`。往 `~/.var/app/com.tencent.WeChat/.pki/nssdb` 写证书**不会**被应用看到，因为沙箱里的 `$HOME/.pki` 压根没挂载。必须 `flatpak override --user com.tencent.WeChat --persist=.pki`。这个坑完全静默：certutil 全部成功，应用照样报 `tls alert certificate unknown`（webview 上显示「您的连接不是私密连接」）。
 - **webview 的代理只能靠环境变量**：应用内设置管不到它，`flatpak override --env=http_proxy=…` 之后 renderer 进程才带上代理（2026-09-11 实测，进程 environ 里能看到）。桌面图标/托盘启动走的是 systemd app scope，终端里 `flatpak run --env=…` 那一次性写法对它无效，所以要用 override。
 
