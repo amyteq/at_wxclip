@@ -93,22 +93,30 @@ python -m wx_dlh proxy         # 另开一个终端，让它一直跑
 **代理设置**（`setProxy.js`）：
 
 1. `networksetup -listallnetworkservices` 列出所有网络服务；
-2. 逐个用 `networksetup getinfo "<服务名>" | grep "^IP address:\s\d"` 筛掉没有 IP 的；
+2. 逐个用 `networksetup getinfo "<服务名>" | grep "^IP address:\s\d"` 筛掉没有 IP 的（原文照抄，这一行有两处毛病，见下）；
 3. 对筛出来的每一个：`networksetup -setsecurewebproxy "<服务名>" <host> <port>`。
 
 撤销是 `networksetup -setsecurewebproxystate "<服务名>" off`。
 
-**两处值得先盯一眼**：
+**三处值得先盯一眼**，后两处在同一行命令上：
 
 - **只设了 `-setsecurewebproxy`（HTTPS），没设 `-setwebproxy`（HTTP）。** 视频号页面是 HTTPS，所以够用；但 `wx-dlh` 的 `/__wx-dlh/*` 也走同源 HTTPS，一致，问题不大 —— 记一笔，别当成遗漏改掉。
-- **那条 `grep` 用的是 `\s` 和 `\d`。** `\d` 不是 GNU grep 也不是 BSD grep 的 BRE 语法（那是 PCRE，要 `-P`）。如果它匹配不到，筛选结果为空 → `networks.length === 0` → `setProxy` 直接 `throw 'no network'`。**上机第一件事就是验这条**：
+- **`getinfo` 少了连字符。** `networksetup(8)` 的子命令写法是 `-getinfo`，Apple 自己的示例也是 `networksetup -getinfo "Wi-Fi"`；不带连字符的 `getinfo` 不是子命令，按手册的说法 `networksetup` 只会吐用法说明，`IP address:` 那几行根本不会出现。
+- **那条 `grep` 用的是 `\s` 和 `\d`。** `\d` 不是 GNU grep 也不是 BSD grep 的 BRE 语法（那是 PCRE，要 `-P`）。
 
-  ```bash
-  networksetup -listallnetworkservices
-  networksetup getinfo "Wi-Fi" | grep "^IP address:\s\d" ; echo "exit=$?"
-  ```
+后两处的后果是同一个，而且参考实现自己分不开：那是一条管道，退出码取自 `grep`，所以「`getinfo` 吐用法说明」和「`grep` 语法不对」在它眼里都是「这个服务没有 IP」→ 筛选结果为空 → `networks.length === 0` → `setProxy` 直接 `throw 'no network'`。**上机第一件事就是把这两个原因拆开验**（还没人在 Mac 上跑过，下面是按手册推出来的说法，以机器上的实际输出为准）：
 
-  `exit` 非 0 就说明这个筛子在这台机器上什么都筛不出来，照抄必坏。换成可移植的写法（`grep -E '^IP address: [0-9]'`）再往下走。
+```bash
+networksetup -listallnetworkservices                                             # 先确认服务名真叫 Wi-Fi
+networksetup getinfo "Wi-Fi" | grep "^IP address:\s\d"      ; echo "upstream=$?" # 参考实现原样
+networksetup -getinfo "Wi-Fi" | grep -E '^IP address: [0-9]' ; echo "control=$?" # 对照组：带连字符 + ERE
+```
+
+- `upstream` 非 0、`control` 为 0 → 参考实现那个筛子在这台机器上就是空的，照抄必坏；往下走用对照组那种写法（`-getinfo` + `grep -E`），adapter 也照这个写。
+- 两条都非 0 → 坏的不是筛子，是服务名或这台机器的网络：拿第一条命令列出来的名字逐个试（服务名不一定叫 `Wi-Fi`），确认那个服务真的有 IP，再回来判这一条。
+- `upstream` 为 0 → 和手册对不上，把 macOS 版本和 `networksetup` 的实际输出记下来，这一条的结论要改。
+
+别把这一条的失败记成第 1 关失败：这时候代理还没设上，它只回答「参考实现那个筛子在这台机器上选不选得出网络服务」。第 1 关要等 `-setsecurewebproxy` 真设上之后，看 `captures/traffic-*.jsonl`。
 
 **证书安装**（`cert.js`）—— **它不装**。macOS 分支把一条命令写进剪贴板、弹个窗让人自己粘到终端跑，然后函数 `reject()`：
 
