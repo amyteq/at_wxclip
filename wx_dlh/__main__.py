@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from wx_dlh import __version__, ca, downloader, frames, inject, pipeline, postprocess
+from wx_dlh import __version__, ca, downloader, frames, inject, pipeline, platforms, postprocess
 from wx_dlh import decrypt as decrypt_module
 from wx_dlh import extract as extract_module
 from wx_dlh import proxy as proxy_module  # mitmproxy-free at import time
@@ -568,6 +568,20 @@ def _ensure_ca(ca_dir: Path) -> Path:
     return ca.ensure_ca(ca_dir)
 
 
+def _warn_unverified_platform() -> None:
+    """Say so before listening on a platform where WeChat has never been routed here.
+
+    The proxy starts fine anywhere; what fails is silent. Without this, a Windows or
+    macOS operator sees a healthy proxy capturing nothing and has no way to tell that
+    from "the video has not been played yet" - see issue #11.
+    """
+    if platforms.is_verified():
+        return
+    print(platforms.status_line(), file=sys.stderr)
+    print(platforms.unsupported_note(), file=sys.stderr)
+    print(file=sys.stderr)
+
+
 def cmd_ca(args: argparse.Namespace) -> int:
     if args.trust_action is not None:
         return _trust_ca(args)
@@ -580,7 +594,14 @@ def cmd_ca(args: argparse.Namespace) -> int:
     except ImportError:
         print(MISSING_MITMPROXY, file=sys.stderr)
         return 3
+    print(platforms.status_line())
+    print()
     print(trust_module.hint(args.ca_dir, args.app_id))
+    if not platforms.is_verified():
+        # On macOS and Windows the stores above are real, which makes them easy to read as
+        # the whole answer; a store that lists the CA is not yet a WeChat that accepts it.
+        print()
+        print(platforms.unsupported_note())
     return 0
 
 
@@ -660,6 +681,7 @@ def cmd_proxy(args: argparse.Namespace) -> int:
         print(f"\n{trust_module.hint(settings.ca_dir)}")
         return 0
 
+    _warn_unverified_platform()
     print(f"CA: {cert}")
     return proxy_module.run(settings, addon=addon, options=options)
 
@@ -804,6 +826,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
             timer.daemon = True
             timer.start()
 
+    _warn_unverified_platform()
     print(f"CA: {cert}")
     print(f"saving into {args.dir}")
     proxy_module.run(settings, addon=addon, options=options, echo=echo, on_ready=on_ready)

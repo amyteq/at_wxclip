@@ -1,12 +1,13 @@
 """CLI surface: what is wired up, what is still a placeholder."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
-from wx_dlh import __version__
-from wx_dlh.__main__ import PLANNED, build_parser, main
+from wx_dlh import __version__, platforms, trust
+from wx_dlh.__main__ import PLANNED, _warn_unverified_platform, build_parser, main
 from wx_dlh.keystream import HEAD_BYTES, keystream
 
 
@@ -35,6 +36,154 @@ def test_every_command_is_wired_up(command, capsys):
 def test_unknown_command_is_rejected():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["nope"])
+
+
+def test_an_unverified_platform_is_announced_before_the_proxy_listens(monkeypatch, capsys):
+    """On Windows or macOS the proxy starts fine and captures nothing, which looks exactly
+    like "the video has not been played yet". Say which one it is, on stderr, up front."""
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: False)
+    monkeypatch.setattr(platforms, "current", lambda *a, **k: platforms.MACOS)
+    _warn_unverified_platform()
+    captured = capsys.readouterr()
+    assert "NOT verified" in captured.err
+    assert platforms.PLAYBOOK in captured.err
+    assert captured.out == ""  # never mixed into the capture log's stream
+
+
+def test_a_verified_platform_says_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: True)
+    _warn_unverified_platform()
+    assert capsys.readouterr().err == ""
+
+
+LISTENING = "<the proxy would bind its port here>"
+
+
+@pytest.fixture
+def never_listens(monkeypatch):
+    """Stand in for the proxy runner - a test binds no port. It marks the moment the proxy
+    would come up, so the warning's *placement* can be asserted and not just its text:
+    past that line the operator is looking at WeChat, not at the terminal."""
+    runs = []
+
+    def run(settings, **kwargs):
+        print(LISTENING, file=sys.stderr)
+        runs.append(settings)
+        return 0
+
+    monkeypatch.setattr("wx_dlh.proxy.run", run)
+    return runs
+
+
+def proxy_argv(command: str, tmp_path: Path) -> list[str]:
+    """`proxy` or `capture` with everything either of them writes to under tmp_path."""
+    argv = [
+        command,
+        "--port",
+        "18897",
+        "--ca-dir",
+        str(tmp_path / "ca"),
+        "--capture-dir",
+        str(tmp_path / "captures"),
+    ]
+    if command == "capture":
+        argv += ["--dir", str(tmp_path / "downloads")]
+    return argv
+
+
+@pytest.mark.parametrize("command", ["proxy", "capture"])
+def test_both_runners_warn_before_the_proxy_listens(
+    command, tmp_path, monkeypatch, capsys, never_listens
+):
+    """The helper above being right is half of it; the two call sites are the other half.
+    Neither may drop the warning, and neither may leave it until the proxy is already up -
+    by then the operator has gone to play a video and the terminal is scrolling flows."""
+    pytest.importorskip("mitmproxy")
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: False)
+    monkeypatch.setattr(platforms, "current", lambda *a, **k: platforms.WINDOWS)
+    main(proxy_argv(command, tmp_path))
+    err = capsys.readouterr().err
+    assert len(never_listens) == 1
+    assert platforms.PLAYBOOK in err
+    assert err.index("NOT verified") < err.index(LISTENING)
+
+
+@pytest.mark.parametrize("command", ["proxy", "capture"])
+def test_a_dry_run_has_no_listener_to_warn_about(
+    command, tmp_path, monkeypatch, capsys, never_listens
+):
+    """--dry-run binds nothing, so there is no silent no-capture to warn about - and its
+    output is parsed as JSON, which a warning in front of it would break."""
+    pytest.importorskip("mitmproxy")
+    monkeypatch.setattr(platforms, "is_verified", lambda *a, **k: False)
+    monkeypatch.setattr(platforms, "current", lambda *a, **k: platforms.WINDOWS)
+    assert main([*proxy_argv(command, tmp_path), "--dry-run"]) == 0
+    captured = capsys.readouterr()
+    assert never_listens == []
+    assert "NOT verified" not in captured.out + captured.err
+
+
+@pytest.fixture
+def host(monkeypatch):
+    """Make `wx-dlh ca` believe it runs on `raw` - both halves of it: `platforms` for what
+    has been verified, `trust` for which stores this machine has."""
+
+    def pretend(raw: str, os_name: str | None) -> None:
+        real_current = platforms.current
+        monkeypatch.setattr(platforms, "current", lambda r=None: real_current(r or raw))
+
+        def detect_os(*a, **k):
+            if os_name is None:
+                raise trust.TrustError(f"unsupported platform: {raw}")
+            return os_name
+
+        monkeypatch.setattr(trust, "detect_os", detect_os)
+
+    return pretend
+
+
+@pytest.mark.parametrize(("raw", "os_name"), [("darwin", "macos"), ("win32", "windows")])
+def test_ca_on_macos_and_windows_lists_the_stores_and_says_they_are_unverified(
+    tmp_path, capsys, host, raw, os_name
+):
+    """Since #28 `wx-dlh ca` lists the real keychain or certificate store there, which reads
+    like the whole answer. No real WeChat has accepted the CA through either yet, so the
+    output says that in the same breath, next to the checks that would show it."""
+    pytest.importorskip("mitmproxy")
+    host(raw, os_name)
+    assert main(["ca", "--ca-dir", str(tmp_path / "ca")]) == 0
+    out = capsys.readouterr().out
+    assert "mitmproxy-ca-cert.pem" in out
+    assert f"Trust stores on this machine ({os_name})" in out
+    assert "wx-dlh ca --install" in out
+    assert "NOT verified" in out
+    assert "never watched against a real WeChat" in out
+    assert platforms.PLAYBOOK in out
+    assert platforms.ISSUE in out
+    assert "flatpak" not in out.lower()
+
+
+def test_ca_on_an_unconsidered_platform_names_no_command(tmp_path, capsys, host):
+    """`wx-dlh ca --install` and trust-ca.sh both refuse an OS they do not know, so
+    pointing at either would be a dead end; the certificate and the playbook remain."""
+    pytest.importorskip("mitmproxy")
+    host("freebsd13", None)
+    assert main(["ca", "--ca-dir", str(tmp_path / "ca")]) == 0
+    out = capsys.readouterr().out
+    assert "mitmproxy-ca-cert.pem" in out
+    assert "ca --install" not in out
+    assert platforms.TRUST_SCRIPT not in out
+    assert platforms.PLAYBOOK in out
+    assert platforms.ISSUE in out
+
+
+def test_ca_on_linux_adds_no_unverified_note(tmp_path, capsys, host):
+    pytest.importorskip("mitmproxy")
+    host("linux", "linux")
+    assert main(["ca", "--ca-dir", str(tmp_path / "ca")]) == 0
+    out = capsys.readouterr().out
+    assert "verified end to end" in out
+    assert platforms.PLAYBOOK not in out
 
 
 def test_ca_creates_the_ca_and_explains_the_trust_stores(tmp_path, capsys):

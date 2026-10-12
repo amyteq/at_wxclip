@@ -49,6 +49,8 @@
 - **JavaScript**：注入到视频号页面里的 hook 脚本 `web/inject.js`
 - **假设 WeChat 运行在同一台 Linux 机器上** —— 注意参考实现只支持 Win/Mac（代理设置走 Windows 注册表或 macOS `networksetup`，没有 Linux 分支），Linux 侧是自己打通的，见 `docs/project-background.md`
 
+只有**路由**（怎么让 WeChat 的流量到代理）和**信任**（怎么让它接受这张 CA）是平台相关的，其余部分换机器不用动。这两件事目前只在 Linux 上实测过；Windows / macOS 上 `wx-dlh` 会明说没验证过 —— 信任交给 `wx-dlh ca --install`（本机没装 wx-dlh 就用 `scripts/trust-ca.sh`，见下面那张表），路由还没有代码 —— 而不是照着 Linux 猜一遍（`wx_dlh/platforms.py`）。**在 WSL 里报的也是 Windows**：`sys.platform` 是 linux，但 WeChat 跑在宿主机上，要路由、要装证书的都是那台机器，所以平台边界和信任库取的是同一个答案（和 `wx-dlh ca` 装进宿主证书库一致），`wx-dlh proxy` / `capture` 在 WSL 里一样会提示没验证过。要去那两个平台上打通的人，清单在 `docs/cross-platform-verification.md`，跟踪在 issue #11。
+
 **keystream 不再需要 Node。** 参考实现把它交给 `decrypt.js`（5.2 MB 的 Emscripten 产物，wasm 以 base64 内嵌，导出 `getDecryptionArray(seedString)`）；M1 把它认出来是标准 ISAAC64，用 `decode_key` 作种子填进结果数组第 0 槽，每个 64 位字按**大端**吐出 131072 字节。`wx_dlh/keystream.py` 就是这个算法的 Python 实现，和 `decrypt.js` 的输出**逐字节一致**——`evals/README.md` 的黄金样本表由 `decrypt.js` 生成，`tests/test_keystream.py` 每次都比对，`tools/keystream-golden.mjs` 可以重新生成这张表并顺手校验移植版。
 
 ## 快速开始
@@ -201,7 +203,7 @@ wx-dlh extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 
 | 路径       | 说明                                                    |
 |------------|---------------------------------------------------------|
-| `wx_dlh/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server、CA 与信任库 ca / trust、后处理 media / frames / extract / summarize / postprocess |
+| `wx_dlh/`  | Python 包：proxy / capture / keystream / decrypt / downloader / pipeline / server、CA 与信任库 ca / trust、平台边界 platforms、后处理 media / frames / extract / summarize / postprocess |
 | `web/`     | 注入脚本与前端页面                                       |
 | `docs/`    | 背景、开发计划、规格说明                                 |
 | `tests/`   | pytest 测试                                              |
