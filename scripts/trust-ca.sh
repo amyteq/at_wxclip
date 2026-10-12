@@ -226,9 +226,16 @@ openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
 # and a length DER would not write that way, which openssl silently canonicalises before
 # it prints the fingerprint the stores below are searched by. wx_dlh/ca.py draws the same
 # line in Python, where there is no openssl to re-encode with.
+# The base64 goes to openssl in lines of 64 the way PEM itself writes them, not as the one
+# long line it was joined into: `enc -base64 -d -A` decodes to nothing at all on OpenSSL
+# 3.0.13 (Ubuntu 24.04, where CI runs), which would refuse every certificate there is.
+# Joining first and re-wrapping after is what lets a file whose body is already one line -
+# or CRLF, or unwrapped by an editor - decode like any other.
 pem_block_bytes() {
   sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' "$1" \
-    | sed -e '/-----/d' -e 's/[[:space:]]//g' | openssl enc -base64 -d -A 2>/dev/null
+    | sed -e '/-----/d' -e 's/[[:space:]]//g' \
+    | awk '{ b = b $0 } END { while (length(b)) { print substr(b, 1, 64); b = substr(b, 65) } }' \
+    | openssl enc -base64 -d 2>/dev/null
 }
 cmp -s <(openssl x509 -in "$CERT" -outform DER 2>/dev/null) <(pem_block_bytes "$CERT") \
   || die "$CERT holds more than the certificate between its PEM delimiters, or a length
