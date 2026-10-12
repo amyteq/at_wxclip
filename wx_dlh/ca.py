@@ -83,165 +83,74 @@ def ensure_ca(ca_dir: Path) -> Path:
 PRIVATE_KEY_PEM = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 
 
-#: Why a length that is not the shortest one possible is refused rather than read: DER
-#: allows each length exactly one spelling, OpenSSL reads the others anyway but re-encodes
-#: the certificate before it fingerprints it, and `digest` hashes the bytes as they came.
-#: The two would print two fingerprints for one certificate, and a store searched by ours
-#: would not find what `openssl x509 -fingerprint` says is in it.
+#: Why the bytes have to be the ones openssl writes back, and not merely bytes openssl can
+#: read: `digest` hashes what is between the delimiters, while openssl fingerprints its own
+#: re-encoding of it. DER allows each value one spelling; openssl reads the others anyway
+#: and rewrites them on the way out, and then the two print two fingerprints for one
+#: certificate - and a store searched by ours would not find what `openssl x509
+#: -fingerprint` says is in it. Where that line falls is openssl's business and not a rule
+#: of ours: it hands `tbsCertificate` back exactly as it read it (the signature is over
+#: those very bytes, padded lengths and all) and re-encodes everything around it, it refuses
+#: some spellings outright, and which is which has moved between its versions. So nothing
+#: here is read off a rule - openssl re-encodes the file and the result is compared byte for
+#: byte, which is the comparison `scripts/trust-ca.sh` makes with the CLI.
 NOT_DER = (
-    "a length between the PEM delimiters is not written the way DER requires (the "
-    "shortest form); openssl re-encodes such a certificate before it fingerprints it, so "
-    "the fingerprints would differ. Re-encode it with: openssl x509 -in FILE -out FILE"
+    "what is between the PEM delimiters is not the certificate alone as openssl writes it "
+    "back: either something rides behind it, or a tag or a length is spelled a way DER does "
+    "not allow and openssl rewrites before it fingerprints - the fingerprints would differ. "
+    "Pass the certificate by itself, re-encoded if need be with: openssl x509 -in FILE -out "
+    "FILE"
 )
 
-#: A value whose length reaches past the bytes there are. `_parse_x509` reads the whole
-#: certificate first, so by the time the encoding is looked at only the outer value can
-#: still say this - the rest has already been walked by OpenSSL.
-CUT_SHORT = "the certificate between the PEM delimiters stops in the middle"
-
-
-def _der_header(
-    der: bytes, start: int, end: int, *, minimal: bool = True
-) -> tuple[int, int | None]:
-    """Where the value at `start` keeps its content, and how many bytes of it follow -
-    None when the length is the indefinite form, which counts nothing and runs to an
-    end-of-contents marker instead.
-
-    ValueError when the header reaches past `end`, or - unless `minimal` says not to ask -
-    when its length is spelled any way but the shortest, the only one DER allows. The
-    indefinite form is one of those other ways, and only a constructed value may carry it:
-    a primitive one holds no marker to close it, and openssl parses no such length either.
-    """
-    if start >= end:
-        raise ValueError(CUT_SHORT)
-    at = start + 1
-    if der[start] & 0x1F == 0x1F:  # a tag number of its own: every byte but the last carries
-        while at < end and der[at] & 0x80:
-            at += 1
-        at += 1
-    if at >= end:
-        raise ValueError(CUT_SHORT)
-    size = der[at]
-    at += 1
-    if not size & 0x80:  # short form: the byte is the length
-        return at, size
-    count = size & 0x7F  # long form: the low seven bits count the length's own bytes
-    if count == 0:  # indefinite: the marker ends it, and only for a constructed value
-        if minimal or not der[start] & 0x20:
-            raise ValueError(NOT_DER)
-        return at, None
-    if count == 0x7F or at + count > end:  # reserved, cut short
-        raise ValueError(NOT_DER)
-    leading_zero = der[at] == 0  # never the shortest form, whatever follows it
-    size = int.from_bytes(der[at : at + count], "big")
-    if minimal and (leading_zero or size < 0x80):  # ... nor the long form where short fits
-        raise ValueError(NOT_DER)
-    return at + count, size
-
-
-def _der_value(der: bytes, start: int, end: int) -> tuple[int, int]:
-    """Where the value at `start` keeps its content, and where that content ends.
-
-    ValueError when the header or the content reaches past `end`, or when its length is
-    spelled any way but the shortest, the only one DER allows.
-    """
-    content, size = _der_header(der, start, end)  # the indefinite form is refused in there
-    if content + size > end:
-        raise ValueError(CUT_SHORT)
-    return content, content + size
-
-
-def _ber_end(der: bytes, start: int, end: int) -> int:
-    """Where the value at `start` ends, its lengths read the way BER writes them as well.
-
-    `tbsCertificate` is measured here, not judged: openssl hands those bytes back exactly
-    as it read them, so how they spell a length is nothing for us to disagree about - an
-    indefinite length closed by an end-of-contents marker among them, which openssl takes
-    and keeps like any other. Finding where the value stops is all that is wanted, so that
-    the values after it, the ones openssl does rewrite, can be held to DER. What is inside
-    is walked only far enough to pass the markers: a marker closes the value it opened, so
-    the nesting has to be counted even here. ValueError when a length or a marker runs past
-    `end`, because then where the value stops is anyone's guess.
-    """
-    at, depth = start, 0
-    while True:
-        if depth and der[at : at + 2] == b"\x00\x00":  # end-of-contents: one level closes
-            at, depth = at + 2, depth - 1
-            if not depth:
-                return at
-            continue
-        content, size = _der_header(der, at, end, minimal=False)
-        if size is None:  # indefinite: what it holds is values again, down to its marker
-            at, depth = content, depth + 1
-            continue
-        at = content + size
-        if at > end:
-            raise ValueError(CUT_SHORT)
-        if not depth:
-            return at
-
-
-def _check_der_lengths(der: bytes, start: int, end: int) -> None:
-    """Raise ValueError unless every value in `der[start:end]`, and every value nested in
-    a constructed one, spells its length the way DER requires.
-
-    A list rather than recursion: how deep the nesting goes is the file's to choose, and a
-    stack this one overflows is not the error to answer with.
-    """
-    spans = [(start, end)]
-    while spans:
-        at, stop = spans.pop()
-        while at < stop:
-            content, finish = _der_value(der, at, stop)
-            if der[at] & 0x20:  # constructed: what it holds is values again
-                spans.append((content, finish))
-            at = finish
-
-
-def _check_one_der_value(der: bytes) -> None:
-    """Raise ValueError unless `der` is one certificate, nothing follows it, and it is
-    already what `openssl x509 -outform DER` would write back.
-
-    Whether the value is a certificate at all is `_parse_x509`'s question, and it is asked
-    first; the question here is the spelling, because `digest` hashes these bytes while
-    openssl fingerprints its own re-encoding. So every length has to be the one openssl
-    writes - except `tbsCertificate`, which it does not rewrite at all: OpenSSL keeps the
-    encoding it read there (the signature is over those exact bytes) and hands it back
-    unchanged, so a padded length in it - or the indefinite form, which is BER and not DER
-    at all - is in the file and in openssl's fingerprint alike. The value is therefore only
-    measured, never judged: `_ber_end` finds where it stops and nothing in it is refused.
-    Checked against OpenSSL 3.0.13 and 3.6.4, which agree, and refusing more than they do
-    would turn away a certificate that `openssl x509 -in F -out F` cannot rewrite.
-    `scripts/trust-ca.sh` draws the line from the other side - it compares openssl's
-    re-encoding with the decoded block byte for byte - and lands on the same one.
-    """
-    if len(der) < 2:
-        raise ValueError("no certificate between the PEM delimiters")
-    content, end = _der_value(der, 0, len(der))
-    if end != len(der):
-        raise ValueError("more than one certificate between the PEM delimiters; pass one")
-    after_tbs = _ber_end(der, content, end)  # tbsCertificate, left exactly as it came
-    _check_der_lengths(der, after_tbs, end)
+#: `--install` files what it is given as a trust anchor, so what may not sign certificates
+#: has no business there. The question is openssl's own X509_check_ca - basicConstraints
+#: CA:TRUE, or one of the older shapes openssl still counts as a CA, and a keyUsage that
+#: permits signing certificates where there is one - and both halves of the port ask it:
+#: `get_ca_certs` hands back only what it accepts, and `openssl x509 -noout -purpose` prints
+#: it as the OCSP helper CA line, which is what `scripts/trust-ca.sh` reads.
+NOT_A_CA = (
+    "openssl reads a certificate between the PEM delimiters, but not a CA certificate "
+    "(openssl x509 -in FILE -noout -purpose prints: OCSP helper CA : No); a trust store "
+    f"takes certification authorities, so pass the {CA_BASENAME}-ca-cert.pem a CA directory "
+    "holds"
+)
 
 
 def _parse_x509(der: bytes) -> None:
-    """Raise ValueError unless `der` is one X.509 certificate and nothing besides.
+    """Raise ValueError unless `der` is one X.509 CA certificate, by itself, and already
+    written the way openssl writes one back.
 
-    The parser is OpenSSL's own, reached through `ssl`: `load_verify_locations` hands DER
-    straight to it without a file or a socket, and the context it fills is thrown away.
-    Going through the standard library rather than `cryptography` keeps mitmproxy the
-    only runtime dependency (AGENTS.md) - that `cryptography` comes in under mitmproxy today
-    is its choice to revisit, not ours to depend on.
+    Both the reading and the verdict are OpenSSL's own, reached through `ssl`:
+    `load_verify_locations` hands DER straight to it without a file or a socket, and
+    `get_ca_certs(binary_form=True)` hands back what it made of it - the certificate
+    re-encoded, which is the `openssl x509 -outform DER` the script compares against and the
+    bytes openssl fingerprints. One certificate back, equal to the one handed in, is the
+    whole test, and it is the script's test: a bundle comes back as two values, anything
+    riding behind the certificate is missing from the re-encoding, and a tag or length
+    openssl rewrites comes back rewritten. Nothing here walks DER itself, so there is no
+    list of spellings of our own to drift from openssl's - checked against OpenSSL 3.0.13
+    and 3.6.4, which do not accept quite the same files as each other, and under both the
+    two halves of the port still accept the same ones. The context is thrown away.
 
-    OpenSSL reads `cadata` as a *list*, so a second certificate after the first would pass:
-    the length is checked too. Those bytes hash to neither CA, and `trust` would file them
-    as one anchor and print that fingerprint as the CA's.
+    What `get_ca_certs` leaves out is what X509_check_ca rejects, so a certificate that is
+    no CA comes back as nothing at all - the rule the script spells with `-purpose`.
+
+    Going through the standard library rather than `cryptography` keeps mitmproxy the only
+    runtime dependency (AGENTS.md) - that `cryptography` comes in under mitmproxy today is
+    its choice to revisit, not ours to depend on.
     """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     try:
-        ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=der)
+        ctx.load_verify_locations(cadata=der)
     except (ssl.SSLError, ValueError) as exc:  # SSLError is an OSError: it must not escape
         raise ValueError(f"no X.509 certificate between the PEM delimiters: {exc}") from None
-    _check_one_der_value(der)
+    read = ctx.get_ca_certs(binary_form=True)
+    if not read:
+        raise ValueError(NOT_A_CA)
+    if len(read) > 1:  # openssl reads `cadata` as a list, and a store takes one anchor
+        raise ValueError("more than one certificate between the PEM delimiters; pass one")
+    if read[0] != der:
+        raise ValueError(NOT_DER)
 
 
 def cert_der(pem_text: str) -> bytes:
@@ -254,6 +163,8 @@ def cert_der(pem_text: str) -> bytes:
 
     What the delimiters hold is parsed, not merely base64-decoded: a `BEGIN CERTIFICATE`
     block can wrap any bytes at all, and `trust` files what it is given as a trust anchor.
+    One CA certificate, by itself, spelled as openssl spells it - `_parse_x509` says why
+    each of those three is asked for.
     """
     if PRIVATE_KEY_PEM.search(pem_text):
         raise ValueError(

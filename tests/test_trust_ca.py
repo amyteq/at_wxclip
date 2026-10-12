@@ -297,6 +297,25 @@ def test_only_the_certificate_may_be_in_the_file(run, tmp_path, cert, build, say
     assert not [c for c in calls if c.startswith("security")]
 
 
+def test_a_certificate_that_is_no_ca_is_refused(run, tmp_path):
+    """Every store here is handed the file as a trust *anchor*, so the script asks openssl
+    whether it may be one: `-purpose` prints X509_check_ca as its OCSP helper CA line. That
+    is the function `wx-dlh ca` reaches through Python's ssl, where `get_ca_certs` hands
+    back only the certificates it accepts, so the two halves refuse the same file."""
+    leaf = tmp_path / "leaf.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+         "-nodes", "-keyout", str(tmp_path / "leaf-key.pem"), "-out", str(leaf),
+         "-subj", "/CN=mitmproxy/O=mitmproxy", "-days", "1",
+         "-addext", "basicConstraints=critical,CA:FALSE"],
+        check=True, capture_output=True,
+    )  # fmt: skip
+    code, out, calls = run("--cert", str(leaf), cert_arg=False, STUB_UNAME="Darwin")
+    assert code == 1
+    assert "not a CA certificate" in out
+    assert not [c for c in calls if c.startswith("security")]
+
+
 def test_the_script_stops_when_openssl_is_missing(run, tmp_path):
     """openssl is what reads the certificate before a store is touched and what every
     store is searched by here, so the script says so instead of installing a file it

@@ -251,9 +251,10 @@ class Trust:
         and `mitmproxy-ca.pem` - certificate *and* private key - looks just as plausible
         as `mitmproxy-ca-cert.pem` next to it. `--system` would install that file as a
         world-readable trust anchor, key and all, so it is parsed and refused here,
-        before any store is touched. So is anything else that is not one certificate,
-        a PEM block wrapping arbitrary bytes included: `install` and `certutil -A` copy
-        the file as it stands, and a trust store is no place to find out it was junk.
+        before any store is touched. So is anything else that is not one CA certificate
+        spelled the way openssl spells one - a PEM block wrapping arbitrary bytes, a
+        bundle, a certificate that may not sign certificates: `install` and `certutil -A`
+        copy the file as it stands, and a trust store is no place to find out it was junk.
         """
         try:
             self.der = load_cert(self.cert)

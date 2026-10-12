@@ -281,7 +281,7 @@ def build_parser(defaults: Settings | None = None) -> argparse.ArgumentParser:
             f"--{store}", dest="trust_stores", action="append_const", const=store, help=text
         )
     ca_cmd.add_argument(
-        "--cert", type=Path, help="certificate to use (default: the one in --ca-dir)"
+        "--cert", type=Path, help="CA certificate to use (default: the one in --ca-dir)"
     )
     ca_cmd.add_argument(
         "--os",

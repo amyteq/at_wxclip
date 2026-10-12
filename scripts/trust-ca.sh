@@ -77,7 +77,7 @@ With no target, the stores this OS has are used - never one that needs sudo or a
   --install   put the certificate in (the default)
   --remove    take the certificate back out
   --list      show what is installed where
-  --cert      certificate to use - the certificate alone, never the mitmproxy-ca.pem
+  --cert      CA certificate to use - the certificate alone, never the mitmproxy-ca.pem
               beside it that carries the private key as well (default:
               $WX_DLH_CA_DIR/mitmproxy-ca-cert.pem, i.e.
               ~/.config/wx-dlh/ca/mitmproxy-ca-cert.pem)
@@ -218,14 +218,32 @@ BLOCKS="$(grep -c -- "-----BEGIN CERTIFICATE-----" "$CERT" 2>/dev/null || true)"
 openssl x509 -in "$CERT" -noout >/dev/null 2>&1 \
   || die "openssl reads no X.509 certificate in $CERT"
 
+# A store below is handed this file as a trust *anchor*, so what may not sign certificates
+# has no business in it. Whether it may is openssl's own X509_check_ca - basicConstraints
+# CA:TRUE, or one of the older shapes it still counts as a CA, and a keyUsage that permits
+# signing certificates where there is one - and `-purpose` prints that very function as its
+# OCSP helper CA line (the other lines ask it and then more besides, or, like Any Purpose,
+# answer Yes to everything). "Yes" or "Yes (WARNING code=N)": the code is which shape it
+# recognised, not a doubt about whether it did. wx_dlh/ca.py asks the same question of the
+# same library - Python's get_ca_certs hands back only what X509_check_ca accepts.
+case "$(openssl x509 -in "$CERT" -noout -purpose 2>/dev/null \
+          | sed -n 's/^OCSP helper CA *: *//p')" in
+  Yes*) ;;
+  *) die "$CERT holds a certificate, but not a CA certificate (openssl x509 -in $CERT
+-noout -purpose prints: OCSP helper CA : No); a trust store takes certification
+authorities, so pass the mitmproxy-ca-cert.pem a CA directory holds" ;;
+esac
+
 # Parsing is not enough on its own: openssl stops at the end of the first ASN.1 value in
 # the block and never looks at what follows it, while --system copies the file in as it
 # stands, 0644. So what openssl re-encodes has to be every byte the block decodes to.
 # One comparison, two things refused: bytes riding behind the certificate (another
 # certificate, a raw private key - which the text search above cannot see - or padding),
 # and a length DER would not write that way, which openssl silently canonicalises before
-# it prints the fingerprint the stores below are searched by. wx_dlh/ca.py draws the same
-# line in Python, where there is no openssl to re-encode with.
+# it prints the fingerprint the stores below are searched by. wx_dlh/ca.py makes this very
+# comparison too - it reaches the same library through Python's ssl rather than the CLI -
+# so the two halves take and refuse the same files without either holding a list of its own
+# of which spellings openssl keeps.
 # The base64 goes to openssl in lines of 64 the way PEM itself writes them, not as the one
 # long line it was joined into: `enc -base64 -d -A` decodes to nothing at all on OpenSSL
 # 3.0.13 (Ubuntu 24.04, where CI runs), which would refuse every certificate there is.
