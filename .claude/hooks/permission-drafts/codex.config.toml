@@ -1,0 +1,9 @@
+# Draft: merge these keys into the chosen user or trusted-project config.
+# Verified against the installed Codex CLI; managed requirements take precedence.
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+writable_roots = ["/tmp"]

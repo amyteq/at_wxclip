@@ -1,0 +1,8 @@
+# Optional user rules: these route direct command forms to the reviewer.
+# They are not a shell parser and do not cover every git -C/wrapper/API spelling.
+prefix_rule(pattern = ["rm"], decision = "prompt", justification = "Review deletion scope; literal /tmp descendants are owner-authorized, other or uncertain targets require review.")
+prefix_rule(pattern = ["git", "push"], decision = "prompt", justification = "Allow routine authorized pushes; protect maintained and dev/ branches from deletion or rewrite.")
+prefix_rule(pattern = ["git", "branch"], decision = "prompt", justification = "Allow disposable doc/, docs/, temp/ and temp- cleanup; protect all dev/ branches.")
+prefix_rule(pattern = ["git", "reset"], decision = "prompt", justification = "Review potential loss of uncommitted work.")
+prefix_rule(pattern = ["git", "clean"], decision = "prompt", justification = "Review removal of untracked files.")
+prefix_rule(pattern = ["git", "update-ref"], decision = "prompt", justification = "Review reference deletion or rewrite.")
