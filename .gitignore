@@ -4,6 +4,10 @@
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.mobileprovision
+*.ipa
 secrets/
 
 # local agent config
