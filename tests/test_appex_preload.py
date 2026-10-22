@@ -8,9 +8,12 @@ against a stand-in binary; no WeChat and no Flatpak needed.
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="LD_PRELOAD shim is Linux-only")
 
 SOURCE = Path(__file__).resolve().parent.parent / "scripts" / "appex-flags-preload.c"
 FLAGS = "--ignore-certificate-errors-spki-list=AAAA --allow-insecure-localhost"

@@ -23,6 +23,8 @@ owner 在 [#24 的 review](https://github.com/amyteq/at_wxclip/pull/24#discussio
 
 ## 开源那天要做的
 
+2026-10-22 的公开准备只处理 GitHub 源码展示及外部互动/自动化限制，不同时发布 PyPI、启用 donation 或安装 release workflow。先完成 [公开检查清单](public-release.md)。下面的 PyPI 与 donation 步骤保留为独立发布计划，执行前另行确认；公开源码本身不表示这些步骤已完成。
+
 按顺序：
 
 1. **确认可以开源了**：`make lint test` 通过，真机上 `wx-dlh capture` 也稳定。这一条只有 owner 能判断。
@@ -60,7 +62,7 @@ owner 在 [#24 的 review](https://github.com/amyteq/at_wxclip/pull/24#discussio
 
    TestPyPI 上同样加一个，Environment name 填 `testpypi`。
 3. GitHub 仓库 → Settings → Environments，建 `pypi` 和 `testpypi` 两个环境；`pypi` 建议加 required reviewers，正式发版要有人点一下才放行。
-4. 下面那份 workflow 加进 `.github/workflows/release.yml`。**开源那天再加**：仓库还私有的时候，不该有一条能把代码发到公网的 workflow。
+4. 只有单独批准 PyPI 发布、并重新核对 Actions/App 触发策略后，才把下面那份 workflow 加进 `.github/workflows/release.yml`。公开 GitHub 源码时不自动添加它；它不属于当前手动检查 workflow。
 5. 不用 Trusted Publishing 的话，就在 PyPI 建 API token：第一次上传之前只能建整个账号范围的 token，传完第一个版本后换成只限 `wx-dlh` 的 project-scoped token。本地用环境变量 `UV_PUBLISH_TOKEN` 交给 `uv publish`，不要写进任何文件。
 
 ### `.github/workflows/release.yml`

@@ -66,7 +66,7 @@
 
 ```bash
 pip install wx-dlh                                             # 发布到 PyPI 之后
-pip install "wx-dlh @ git+https://github.com/amyteq/at_wxclip"  # 现在（仓库是私有的，要有访问权限）
+pip install "wx-dlh @ git+https://github.com/amyteq/at_wxclip"  # 从源码安装；若仓库仍私有，需要访问权限
 ```
 
 一条命令就装齐，`capture` / `proxy` 要用的 mitmproxy 是默认依赖。想装成独立的命令行工具就用 `pipx install wx-dlh` 或 `uv tool install wx-dlh`。信任 CA 也在这条命令里（`wx-dlh ca --install`，见下）；`scripts/` 下的辅助脚本不在包里，用 pip 装的人只有 Linux 上「带代理启动 WeChat」那一套（`run-wechat-proxied.sh` 和它编译的 preload shim）要从仓库取。发布流程见 `docs/pypi-publishing.md`。
@@ -78,6 +78,8 @@ make setup          # 创建 .venv 并安装依赖（uv，回落到 pip；含代
 make lint test      # 检查 + 测试
 python -m wx_dlh --help
 ```
+
+公开展示时，仓库 CI 只保留维护者手动触发，不因 push、PR、issue、评论或提及自动运行；本地检查仍用 `make lint test`。GitHub App、仓库互动入口和 Actions 开关是独立设置，不能仅靠 workflow 文件关闭，公开前按 [公开检查清单](docs/public-release.md) 分别核实。源码公开不代表 PyPI 已发布，也不扩大下文记录的跨平台或模型验证范围。
 
 准备工作两步，细节和判定方法见 `docs/M0-runbook.md`：
 

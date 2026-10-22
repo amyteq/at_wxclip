@@ -1,13 +1,13 @@
 # Redroid 手动测试（#27 / PR #29）
 
-按 [owner 的补充要求](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117679194) 提供。这份清单用于 owner 在本机桌面亲自检查；完整安装与失败证据见 [#30 的 spike runbook](https://github.com/amyteq/at_wxclip/issues/30)。当前 8.0.79 自动启动测试会闪退，所以先检查能否稳定打开，再决定是否登录；本文后半段是尚未执行的条件步骤。
+按 [owner 的补充要求](https://github.com/amyteq/at_wxclip/issues/27#issuecomment-6117679194) 提供。这份清单用于 owner 在本机桌面亲自检查；完整安装与失败证据见 [#30 的 spike runbook](https://github.com/amyteq/at_wxclip/issues/30)。本清单记录的 8.0.79 自动启动测试会闪退，所以先检查能否稳定打开，再决定是否登录；本文后半段是该轮尚未执行的条件步骤。下面的 `/path/to/at_wxclip` 是占位路径，使用前替换为自己的 checkout；容器名也应先与自己的隔离测试环境核对。
 
 ## 1. 启动已保留的平板
 
 在宿主桌面的终端执行，保持这个终端可用：
 
 ```bash
-cd /home/harry/test/at_wxclip
+cd /path/to/at_wxclip
 docker ps -a --filter name=redroid-wx-dlh-27 --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
@@ -65,7 +65,7 @@ tar -xzf temp/scrcpy-linux-x86_64-v5.0.1.tar.gz -C temp
 在平板窗口里手动点击微信，等待约 30 秒，观察是否仍保持同一个页面。仅短暂出现欢迎页、`am start` 返回成功、或短暂出现 PID 都不算稳定。若点图标没有反应，可在第二个终端执行：
 
 ```bash
-cd /home/harry/test/at_wxclip
+cd /path/to/at_wxclip
 adb -s 127.0.0.1:5555 shell am start -W -n com.tencent.mm/.ui.LauncherUI
 adb -s 127.0.0.1:5555 shell pidof com.tencent.mm
 ```
@@ -92,28 +92,34 @@ adb -s 127.0.0.1:5555 shell am force-stop com.tencent.mm
 此节尚未实测。先在独立终端持续运行已有代理，流量只写入本机忽略目录：
 
 ```bash
-cd /home/harry/test/at_wxclip
-.venv/bin/python -m wx_dlh proxy --host 172.17.0.1 --port 8899 \
-  --ca-dir /home/harry/.local/share/wx-dlh/redroid-27/ca \
+cd /path/to/at_wxclip
+WX_DLH_BRIDGE="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+WX_DLH_TEST_CA="${XDG_DATA_HOME:-$HOME/.local/share}/wx-dlh/redroid-27/ca"
+test -n "$WX_DLH_BRIDGE" &&
+  .venv/bin/python -m wx_dlh proxy --host "$WX_DLH_BRIDGE" --port 8899 \
+  --ca-dir "$WX_DLH_TEST_CA" \
   --capture-dir temp/redroid-manual-captures > temp/redroid-manual-proxy.log 2>&1
 ```
 
-第二个终端确认网桥地址仍为 `172.17.0.1`，且代理已监听，再检查/安装 guest 的公钥 CA。这里沿用本次已生成的 CA，不重新生成或改动宿主信任库：
+第二个终端重新读取当前网桥地址，确认它与代理监听地址一致，再检查/安装 guest 的公钥 CA。这里沿用自己已生成的测试 CA，不复制其他机器的 CA，也不改动宿主信任库：
 
 ```bash
-docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+WX_DLH_BRIDGE="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+WX_DLH_TEST_CA="${XDG_DATA_HOME:-$HOME/.local/share}/wx-dlh/redroid-27/ca"
 ss -ltn 'sport = :8899'
-openssl x509 -in /home/harry/.local/share/wx-dlh/redroid-27/ca/mitmproxy-ca-cert.pem -subject_hash_old -noout
+WX_DLH_CA_HASH="$(openssl x509 -in "$WX_DLH_TEST_CA/mitmproxy-ca-cert.pem" -subject_hash_old -noout)"
+openssl x509 -in "$WX_DLH_TEST_CA/mitmproxy-ca-cert.pem" -fingerprint -sha256 -noout
 ```
 
-hash 必须是本次的 `c8750f0d`；若 CA 或网桥已变化，按 [#30 runbook 第 3 节「代理与系统 CA」](https://github.com/amyteq/at_wxclip/issues/30#3-代理与系统-ca) 重新核对，不能直接沿用下面的文件名或地址。
+核对 CA 指纹与自己代理使用的证书一致，且 `WX_DLH_CA_HASH` 是八位十六进制值；任一步失败就停止，不执行下方安装。若 CA 或网桥变化，按 [#30 runbook 第 3 节「代理与系统 CA」](https://github.com/amyteq/at_wxclip/issues/30#3-代理与系统-ca) 重新核对，不沿用其他机器的证书文件名或地址。
 
 ```bash
 adb -s 127.0.0.1:5555 root
 adb -s 127.0.0.1:5555 wait-for-device
-adb -s 127.0.0.1:5555 push /home/harry/.local/share/wx-dlh/redroid-27/ca/mitmproxy-ca-cert.pem /system/etc/security/cacerts/c8750f0d.0
-adb -s 127.0.0.1:5555 shell 'chown 0:0 /system/etc/security/cacerts/c8750f0d.0 && chmod 644 /system/etc/security/cacerts/c8750f0d.0 && restorecon /system/etc/security/cacerts/c8750f0d.0'
-adb -s 127.0.0.1:5555 shell settings put global http_proxy 172.17.0.1:8899
+WX_DLH_ANDROID_CA="/system/etc/security/cacerts/$WX_DLH_CA_HASH.0"
+adb -s 127.0.0.1:5555 push "$WX_DLH_TEST_CA/mitmproxy-ca-cert.pem" "$WX_DLH_ANDROID_CA"
+adb -s 127.0.0.1:5555 shell "chown 0:0 '$WX_DLH_ANDROID_CA' && chmod 644 '$WX_DLH_ANDROID_CA' && restorecon '$WX_DLH_ANDROID_CA'"
+adb -s 127.0.0.1:5555 shell settings put global http_proxy "$WX_DLH_BRIDGE:8899"
 adb -s 127.0.0.1:5555 shell settings get global http_proxy
 ```
 
