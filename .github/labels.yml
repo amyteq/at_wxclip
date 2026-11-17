@@ -1,6 +1,6 @@
 # Source of truth for this repository's workflow labels.
 #
-# Two pairs of gates, both read by the `at-refine-issue` skill and by anyone
+# Two pairs of gates, both read by the `dev-refine-issue` skill and by anyone
 # triaging by hand:
 #
 #   decision:*  — has a human settled the open questions on this issue?

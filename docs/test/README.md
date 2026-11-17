@@ -2,6 +2,8 @@
 
 放**人工/半自动验证的记录**：跑了什么、看到什么、判据是什么。自动化测试在 `tests/`，这里只收那些跑不进 pytest 的东西 —— 需要真实机器、真实客户端、或者外部 CLI 的验证。
 
+注：下面两份记录对应的 `at-review-pr`、`at-refine-issue` 已于 2026-11-17 退役到 `.claude/archived/`（[amyteq/tt_tools#33](https://github.com/amyteq/tt_tools/issues/33)）；记录里的 `.claude/skills/at-*` 路径现在对应 `.claude/archived/at-*`，记录本身保持原样。
+
 | 文件 | 内容 |
 |---|---|
 | `at-review-pr.md` | `at-review-pr` skill 的离线验证：启动形态与 flag 核对、参数与循环场景矩阵、仓库检查 |
