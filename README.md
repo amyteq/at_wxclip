@@ -212,24 +212,15 @@ wx-dlh extract <目录> --tessdata-dir ~/.local/share/tessdata # 不用 root 的
 | `scripts/` | 给人手动执行的入口脚本                                   |
 | `tools/`   | 辅助小工具，不属于交付包                                 |
 | `evals/`   | 解码/提取/总结质量的固定样本与校验                        |
-| `.claude/skills/` | 本仓库自带的 Claude Code skill（`at-review-pr` / `at-refine-issue`），见下一节 |
+| `.claude/archived/` | 已退役的 skill 副本（`at-review-pr` / `at-refine-issue`），仅留档、不再加载，见下一节 |
 
 详见 `docs/directory-guide.md`；智能体协作约定见 `AGENTS.md`。
 
-## Claude Code 项目 skill
+## 开发流程 skill
 
-仓库自带两个开发流程 skill，正文在 `.claude/skills/<name>/SKILL.md`，`.agents/skills/` 下是指向它们的仓库内相对软链接。两个 skill 自身都不往仓库里加运行时代码。写入范围不一样，别弄混：`at-refine-issue` 只读写 issue 正文、评论与 label，永远不碰代码；`at-review-pr` 除了发布 review 与处置报告，还会在已批准的范围内启动一个 writer 会话去改**被 review 的那条 PR** —— 该 PR 涉及的源码、测试、文档都可能被改动，并在已授权时提交、推送到该 PR 的 head 分支。
+开发流程 skill 来自 [gitmunk](https://github.com/amyteq/gitmunk) 的 `dev-skills` 插件，在项目级启用：`.claude/settings.json` 登记了 `gitmunk` marketplace 并启用 `dev-skills@gitmunk`，信任本仓库目录后 Claude Code 会提示安装（[安装说明](https://github.com/amyteq/gitmunk/blob/main/docs/install.md)）。`/dev-review-pr` 跑有界的 PR review/fix 循环，不会合并 PR；`/dev-refine-issue` 把一条已有 issue 改写成可派发的工单，不碰代码。Codex 需按安装说明在用户级安装，写作 `$dev-skills:dev-review-pr`、`$dev-skills:dev-refine-issue`。参数见各 skill 的 `SKILL.md`。
 
-| Skill | 调用 | 做什么 |
-|-------|------|--------|
-| `at-review-pr` | `/at-review-pr [pr=<n>] [rounds] [reviewer] [writer]` | 用互相独立的 Codex / Claude Code 会话跑有界的「review → 修/申辩/推迟 → 再 review」循环，每条发现有稳定 ID 与状态机，批准前必须对最终 head 跑一次完整 review |
-| `at-refine-issue` | `/at-refine-issue <issue-url\|number> [说明]` | 把一条已有 issue 改写成工单：编号稳定的验收标准（`AC1`…`ACn`）、一条自包含的任务 comment、以及可复制的启动 prompt |
-
-参数默认值：`at-review-pr` 的 `rounds` 默认 `10`、`reviewer` 默认 `codex`、`writer` 默认 `claude`；`pr=<n>` 省略时按「显式上下文 → 当前分支唯一的 open PR」解析，解析不出来就问，不猜。`at-refine-issue` 的第一个参数是 issue URL 或编号，正常情况下必须给；只有当会话里已经明确、无歧义地选定了唯一一条 issue 时才允许省略，两条候选或「我们刚才说的那条」一律要问、不猜。后面跟可选的细化说明。
-
-两个 skill 都不会自己派工：`at-refine-issue` 产出的工单在人发出启动 prompt 之前是死的，`at-review-pr` 也不会合并 PR。
-
-**Codex 侧要显式指路。** Codex CLI 会向上查找 `.agents/skills`，但不会像 Claude Code 那样把 skill 当斜杠命令自动挂上来，所以在 Codex 里用的时候，直接把文件指给它，例如 `按 .claude/skills/at-review-pr/SKILL.md 跑 PR #14 的 review 循环`。软链接只是让 `.agents/skills/at-review-pr/SKILL.md` 这条路径也能读到同一份正文。
+它们取代了仓库原先自带的 `at-review-pr` 与 `at-refine-issue`；旧副本原样留在 `.claude/archived/`，不再被加载（[amyteq/tt_tools#33](https://github.com/amyteq/tt_tools/issues/33)）。
 
 ## 参考
 
