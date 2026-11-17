@@ -2,7 +2,7 @@
 
 放**人工/半自动验证的记录**：跑了什么、看到什么、判据是什么。自动化测试在 `tests/`，这里只收那些跑不进 pytest 的东西 —— 需要真实机器、真实客户端、或者外部 CLI 的验证。
 
-注：下面两份记录对应的 `at-review-pr`、`at-refine-issue` 已于 2026-11-17 退役到 `.claude/archived/`（[amyteq/tt_tools#33](https://github.com/amyteq/tt_tools/issues/33)）；记录里的 `.claude/skills/at-*` 路径现在对应 `.claude/archived/at-*`，记录本身保持原样。
+注：下面两份记录对应的 `at-review-pr`、`at-refine-issue` 已于 2026-11-17 退役到 `.claude/archived/`（[amyteq/tt_tools#33](https://github.com/amyteq/tt_tools/issues/33)）；记录里指向这两份副本的 `.claude/skills/at-*/SKILL.md` 路径（本页下方输出块的路径列、两份记录的行号说明）已改写为 `.claude/archived/at-*/SKILL.md`；文件是原样移过去的，行号与字段不变，记录的其余内容保持原样。
 
 | 文件 | 内容 |
 |---|---|
@@ -20,8 +20,8 @@ Two skills start with "at-": at-refine-issue and at-review-pr.
 也就是说 `.claude/skills/<name>/SKILL.md` 这个落位确实被 harness 认出来了，不需要额外注册。要注意的是**那份清单只给 name 和 description，不给 `argument-hint`** —— 所以「frontmatter 有 `argument-hint` 和 `disable-model-invocation: false`」这半条是另外用 YAML 解析验的，不是从清单里读出来的：
 
 ```text
-.claude/skills/at-review-pr/SKILL.md:    keys=['argument-hint', 'description', 'disable-model-invocation', 'name']  name='at-review-pr'     disable-model-invocation=False
-.claude/skills/at-refine-issue/SKILL.md: keys=['argument-hint', 'description', 'disable-model-invocation', 'name']  name='at-refine-issue'  disable-model-invocation=False
+.claude/archived/at-review-pr/SKILL.md:    keys=['argument-hint', 'description', 'disable-model-invocation', 'name']  name='at-review-pr'     disable-model-invocation=False
+.claude/archived/at-refine-issue/SKILL.md: keys=['argument-hint', 'description', 'disable-model-invocation', 'name']  name='at-refine-issue'  disable-model-invocation=False
 ```
 
 两份 frontmatter 都能被 `yaml.safe_load` 解析，四个必需字段齐全，`name` 与目录名一致。

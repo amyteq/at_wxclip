@@ -67,7 +67,7 @@ form 4: bash -n exit=0
 | 批准前 head 变了 | 远程 head 与快照不符 | 停下来对账，不批准过期的 diff | PASS | 推演（`SKILL.md:54`「Do not silently approve a stale diff」、`SKILL.md:80`） |
 | PR 由当前登录账号创建 | GitHub 拒绝自评 | 走 `approval-eligible` 评论路径，并**以成功收尾**，不再多跑一轮 | PASS | 推演（`SKILL.md:82`「That verdict **ends the loop successfully**」） |
 
-上面标「推演」的行都不需要联网：判据是写下来的规则本身，行末的 `文件:行` 加引号里的原文就是出处。**行号按本记录所在提交时的 `.claude/skills/at-review-pr/SKILL.md` 计**；行号会随后续编辑漂移，引号里的原文和下面的小节归属才是耐久的锚点，对不上时以后者为准重新定位：参数解析在 “Inputs and preflight”（`SKILL.md:12-32`），轮次与收尾在 “Numbered rounds”（`SKILL.md:52-64`），批准在 “Terminal approval and report”（`SKILL.md:76-84`）。真正要联网的只有一条 —— 对着一条在飞的 PR 跑完整循环，那条明确在 #16 的非目标里。
+上面标「推演」的行都不需要联网：判据是写下来的规则本身，行末的 `文件:行` 加引号里的原文就是出处。**行号按本记录所在提交时的 `.claude/archived/at-review-pr/SKILL.md` 计**；行号会随后续编辑漂移，引号里的原文和下面的小节归属才是耐久的锚点，对不上时以后者为准重新定位：参数解析在 “Inputs and preflight”（`SKILL.md:12-32`），轮次与收尾在 “Numbered rounds”（`SKILL.md:52-64`），批准在 “Terminal approval and report”（`SKILL.md:76-84`）。真正要联网的只有一条 —— 对着一条在飞的 PR 跑完整循环，那条明确在 #16 的非目标里。
 
 ## 那条「假发现」是什么
 
